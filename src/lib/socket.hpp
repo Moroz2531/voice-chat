@@ -8,11 +8,13 @@ namespace containers {
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <ws2def.h>
 #include <ws2tcpip.h>
 
 using netsize_t = int;
 #elifdef __linux__
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 
 using netsize_t = ssize_t;
@@ -21,72 +23,78 @@ using netsize_t = ssize_t;
 #define DATA_BYTES_MAX_LEN 1400
 #define DATA_FLOAT_LEN (DATA_BYTES_MAX_LEN / sizeof(float))
 
-class Socket {
-  using Counter = std::shared_ptr<std::atomic_int>;
-  enum SocketOptions {
-    LISTEN_QUEUE_LEN = 10,
-  };
+class Socket final {
+    using Counter = std::shared_ptr<std::atomic_size_t>;
+    enum SocketOptions {
+        LISTEN_QUEUE_LEN = 10,
+    };
 #ifdef _WIN32
-  WSADATA wsaData_;
-  SOCKET sfd_{~0};
+    WSADATA wsaData_;
+    SOCKET sfd_{~0};
 #elifdef __linux__
-  int sfd_{-1};
+    int sfd_{-1};
 #endif
-  Counter refCount_;
+    Counter refCount_;
 
-public:
-  Socket() = default;
-  Socket(int domain, int type, int protocol);
-  Socket(const Socket &sock);
-  Socket(Socket &&sock) noexcept;
-  virtual ~Socket();
+   public:
+    Socket() = default;
+    Socket(int domain, int type, int protocol);
+    Socket(const Socket& sock);
+    Socket(Socket&& sock) noexcept;
+    virtual ~Socket();
 
-  Socket &operator=(const Socket &sock);
-  Socket &operator=(Socket &&sock) noexcept;
+    Socket& operator=(const Socket& sock);
+    Socket& operator=(Socket&& sock) noexcept;
 
-  bool isValid() const noexcept;
-  int getType() const;
+    bool isValid() const noexcept;
+    int getType() const;
 
-  void create(int domain, int type, int protocol);
-  void close() noexcept;
+    void create(int domain, int type, int protocol);
+    void close() noexcept;
 
 #ifdef _WIN32
-  SOCKET getRaw() const;
+    SOCKET getRaw() const;
 #elifdef __linux__
-  int getRaw() const;
+    int getRaw() const;
 #endif
 
-  void bind(const struct sockaddr *addr, socklen_t addrLen) const;
-  void listen(int queue = LISTEN_QUEUE_LEN) const;
-  void connect(const struct sockaddr *addr, socklen_t addrLen) const;
+    void bind(const sockaddr* addr, socklen_t addrLen) const;
+    void listen(int queue = LISTEN_QUEUE_LEN) const;
+    void connect(const sockaddr* addr, socklen_t addrLen) const;
 
-  Socket accept(sockaddr *addr, socklen_t *addrLen) const;
+    Socket accept(sockaddr* addr, socklen_t* addrLen) const;
 
-  void getsockname(sockaddr *addr, socklen_t *addrLen) const;
-  void setsockopt(int level, int optname, const void *optval,
-                  socklen_t optlen) const;
-  void getsockopt(int level, int optname, void *optval,
-                  socklen_t *optlen) const;
+    void getsockname(sockaddr* addr, socklen_t* addrLen) const;
+    void getpeername(sockaddr* addr, socklen_t* addrLen) const;
 
-  netsize_t send(const char *buf, size_t count, int flags) const;
-  netsize_t sendto(const char *buf, size_t count, int flags,
-                   const sockaddr *addr, socklen_t addrLen = 0) const;
-  netsize_t sendto(const float *buf, size_t count, int flags,
-                   const sockaddr *addr, socklen_t addrLen = 0) const;
+    void setsockopt(int level, int optname, const void* optval, socklen_t optlen) const;
+    void getsockopt(int level, int optname, void* optval, socklen_t* optlen) const;
 
-  netsize_t recv(char *buf, size_t count, int flags) const;
-  netsize_t recvfrom(char *buf, size_t count, int flags, sockaddr *addr,
-                     socklen_t *addrLen) const;
-  netsize_t recvfrom(float *buf, size_t count, int flags, sockaddr *addr,
-                     socklen_t *addrLen) const;
+    void send(const std::string& buf, int flags) const;
+    netsize_t send(const char* buf, size_t count, int flags) const;
+    netsize_t sendto(const char* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen = 0) const;
+    netsize_t sendto(const float* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen = 0) const;
 
-private:
+    std::string recv(int flags) const;
+    netsize_t recv(char* buf, size_t count, int flags) const;
+    netsize_t recvfrom(char* buf, size_t count, int flags, sockaddr* addr, socklen_t* addrLen) const;
+    netsize_t recvfrom(float* buf, size_t count, int flags, sockaddr* addr, socklen_t* addrLen) const;
+
+    template <bool remote = false>
+    in_addr_t ip() const;
+
+    template <bool remote = false>
+    in_port_t port() const;
+
+    operator auto() const { return sfd_; }
+
+   private:
 #ifdef __linux__
-  explicit Socket(int fd);
+    explicit Socket(int fd);
 #endif
-  void swap(Socket &sock) noexcept;
+    void swap(Socket& sock) noexcept;
 
-  size_t cmp(size_t n1, size_t n2) const;
+    size_t cmp(size_t n1, size_t n2) const;
 };
 
-} // namespace containers
+}  // namespace containers
