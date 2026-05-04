@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdexcept>
 #include <utility>
 
@@ -48,7 +49,11 @@ void Epoll::erase(int sfd) const {
 
 int Epoll::wait(epoll_event* evs, int maxevs, int timeout_ms) const {
     int retval = epoll_wait(epfd_, evs, maxevs, timeout_ms);
-    if (retval == -1)
-        throw(std::system_error());
+    if (retval == -1) {
+        if (errno == EINTR)
+            return 0;
+        else
+            throw(std::system_error());
+    }
     return retval;
 }
