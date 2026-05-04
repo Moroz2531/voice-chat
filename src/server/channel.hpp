@@ -1,5 +1,6 @@
 #pragma once
 
+#include <netinet/in.h>
 #include <boost/unordered_set.hpp>
 #include <mutex>
 #include <string>
@@ -38,26 +39,26 @@ class VoiceChannel final : public Channel {
 
    public:
     void run();
-    void stop() noexcept;
+    void stop();
     bool joinable() const noexcept;
 
    public:
     void insert(in_addr_t addr, in_port_t port);
     void erase(in_addr_t addr, in_port_t port);
 
-    size_t size() const noexcept;
-    bool empty() const noexcept;
+    size_t size() const;
+    bool empty() const;
     bool contains(in_addr_t addr, in_port_t port) const;
 
     in_addr_t getIp() const;
     in_port_t getPort() const;
 
    private:
-    void runLoop(std::stop_token stok) noexcept;
+    void runLoop(std::stop_token stok);
 
    private:
     std::jthread jt_;
-    std::mutex mut_;
+    mutable std::mutex mut_;
     containers::Socket sfd_;
     boost::unordered_set<std::pair<in_addr_t, in_port_t>> users_;
 };
