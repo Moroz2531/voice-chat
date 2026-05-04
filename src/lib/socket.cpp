@@ -1,39 +1,47 @@
 #if defined _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#elifdef __linux__
+#else
 #include <errno.h>
 #include <unistd.h>
 #endif
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
 
 #include "socket.hpp"
 
 using namespace containers;
 
-Socket::Socket(int domain, int type, int protocol) {
-    create(domain, type, protocol);
+Socket::Socket(int domain, int type, int protocol) : refCount_{std::make_shared<std::atomic_size_t>(1)} {
+#ifdef _WIN32
+    if (::WSAStartup(MAKEWORD(2, 2), &wsaData_) != 0)
+        throw std::runtime_error("WSAStartup");
+    if ((sfd_ = ::socket(domain, type, protocol)) == ~0) {
+        ::WSACleanup();
+        throw std::runtime_error("socket: create socket\n");
+    }
+#else
+    if ((sfd_ = ::socket(domain, type, protocol)) == -1)
+        throw std::runtime_error("socket: create socket\n");
+#endif
 }
 
-Socket::Socket(int fd) {
+Socket::Socket(int fd) : sfd_{fd}, refCount_{std::make_shared<std::atomic_size_t>(1)} {
 #ifdef _WIN32
     if (::WSAStartup(MAKEWORD(2, 2), &wsaData_) != 0)
         throw std::runtime_error("WSAStartup");
 #endif
-    sfd_ = fd;
-    ++(*refCount_);
 }
 
 Socket::~Socket() {
     close();
 }
 
-Socket::Socket(const Socket& sock) {
-    sfd_ = sock.sfd_;
-    refCount_ = sock.refCount_;
-    if (sock.isValid()) {
+Socket::Socket(const Socket& sock) : sfd_{sock.sfd_}, refCount_{sock.refCount_} {
+    if (isValid()) {
 #ifdef _WIN32
         if (::WSAStartup(MAKEWORD(2, 2), &wsaData_) != 0)
             throw std::runtime_error("WSAStartup");
@@ -42,14 +50,13 @@ Socket::Socket(const Socket& sock) {
     }
 }
 
-Socket::Socket(Socket&& sock) noexcept {
+Socket::Socket(Socket&& sock) noexcept : refCount_{sock.refCount_} {
 #ifdef _WIN32
     wsaData_ = sock.wsaData_;
     sfd_ = std::exchange(sock.sfd_, ~0);
-#elifdef __linux__
+#else
     sfd_ = std::exchange(sock.sfd_, -1);
 #endif
-    refCount_ = sock.refCount_;
 }
 
 Socket& Socket::operator=(const Socket& sock) {
@@ -69,7 +76,7 @@ Socket& Socket::operator=(Socket&& sock) noexcept {
 bool Socket::isValid() const noexcept {
 #ifdef _WIN32
     if (sfd_ == ~0)
-#elifdef __linux__
+#else
     if (sfd_ == -1)
 #endif
         return false;
@@ -86,27 +93,15 @@ int Socket::getType() const {
 }
 
 void Socket::create(int domain, int type, int protocol) {
-    if (isValid())
-        throw std::invalid_argument("socket created");
-
-    refCount_ = std::make_shared<std::atomic_size_t>(1);
-    sfd_ = socket(domain, type, protocol);
-
-#ifdef _WIN32
-    if (::WSAStartup(MAKEWORD(2, 2), &wsaData_) != 0)
-        throw std::runtime_error("WSAStartup");
-    if (sfd_ == INVALID_SOCKET)
-#elifdef __linux__
-    if (sfd_ == -1)
-#endif
-        throw std::runtime_error("socket");
+    Socket temp{domain, type, protocol};
+    swap(temp);
 }
 
 #if _WIN32
 SOCKET Socket::getRaw() const {
     return sfd_;
 }
-#elifdef __linux__
+#else
 int Socket::getRaw() const {
     return sfd_;
 }
@@ -119,26 +114,41 @@ void Socket::listen(int queue) const {
 
 Socket Socket::accept(sockaddr* addr, socklen_t* addrLen) const {
     int sfd;
-
-    if ((sfd = ::accept(sfd_, addr, addrLen)) == -1)
-        throw std::runtime_error("accept");
-
-    return Socket(sfd);
+    do {
+        if ((sfd = ::accept(sfd_, addr, addrLen)) == -1) {
+            if (errno == ECONNABORTED || errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+                std::this_thread::yield();
+                continue;
+            }
+            throw std::runtime_error("accept");
+        }
+    } while (sfd == -1);
+    try {
+        return Socket(sfd);
+    } catch (const std::exception& e) {
+        ::close(sfd);
+        throw;
+    }
 }
 
-void Socket::close() {
+void Socket::close() noexcept {
 #ifdef _WIN32
     if (sfd_ != ~0) {
         ::WSACleanup();
-        if (--(*refCount_) == 0)
+        if (--(*refCount_) == 0) {
             ::closesocket(sfd_);
+            refCount_.reset();
+        }
         sfd_ = ~0;
     }
-#elifdef __linux__
-    if (sfd_ != -1)
-        if (--(*refCount_) == 0)
+#else
+    if (sfd_ != -1) {
+        if (--(*refCount_) == 0) {
             ::close(sfd_);
-    sfd_ = -1;
+            refCount_.reset();
+        }
+        sfd_ = -1;
+    }
 #endif
 }
 
@@ -147,7 +157,7 @@ void Socket::bind(const sockaddr* addr, socklen_t addrLen) const {
 
 #ifdef _WIN32
     if (retval == SOCKET_ERROR)
-#elifdef __linux__
+#else
     if (retval == -1)
 #endif
         throw std::runtime_error("bind");
@@ -158,7 +168,7 @@ void Socket::getsockname(sockaddr* addr, socklen_t* addrLen) const {
 
 #ifdef _WIN32
     if (retval == SOCKET_ERROR)
-#elifdef __linux__
+#else
     if (retval == -1)
 #endif
         throw std::runtime_error("getsockname");
@@ -169,7 +179,7 @@ void Socket::getpeername(sockaddr* addr, socklen_t* addrLen) const {
 
 #ifdef _WIN32
     if (retval == SOCKET_ERROR)
-#elifdef __linux__
+#else
     if (retval == -1)
 #endif
         throw std::runtime_error("getpeername");
@@ -180,13 +190,13 @@ void Socket::connect(const sockaddr* addr, socklen_t addrLen) const {
 
 #ifdef _WIN32
     if (retval == SOCKET_ERROR)
-#elifdef __linux__
+#else
     if (retval == -1)
 #endif
         throw std::runtime_error("connect");
 }
 
-netsize_t Socket::sendto(const char* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen = 0) const {
+netsize_t Socket::sendto(const char* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen) const {
     netsize_t sendBytes = ::sendto(sfd_, buf, count, flags, addr, addrLen);
 #ifdef _WIN32
     if (sendBytes == SOCKET_ERROR) {
@@ -194,14 +204,13 @@ netsize_t Socket::sendto(const char* buf, size_t count, int flags, const sockadd
             return 0;
         throw std::runtime_error("sendto");
     }
-#elifdef __linux__
+#else
     if (sendBytes == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return 0;
         throw std::runtime_error("sendto");
     }
 #endif
-    throw std::runtime_error("sendto");
     return sendBytes;
 }
 
@@ -213,7 +222,7 @@ netsize_t Socket::recvfrom(char* buf, size_t count, int flags, sockaddr* addr, s
             return 0;
         throw std::runtime_error("recvfrom");
     }
-#elifdef __linux__
+#else
     if (recvBytes == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return 0;
@@ -232,19 +241,20 @@ netsize_t Socket::sendto(const float* buf, size_t count, int flags, const sockad
 }
 
 netsize_t Socket::recvfrom(float* buf, size_t count, int flags, sockaddr* addr, socklen_t* addrLen) const {
-    const size_t bytes = count * sizeof(float);
+    const size_t bytes{count * sizeof(float)};
     char tempbuf[DATA_BYTES_MAX_LEN];
     size_t size;
-    netsize_t recvBytes, offset = 0;
+    netsize_t recvBytes;
+    size_t offset{0};
 
     do {
-        size = bytes - offset < DATA_BYTES_MAX_LEN ? bytes - offset : DATA_BYTES_MAX_LEN;
-        recvBytes += recvfrom(tempbuf, size, flags, addr, addrLen);
+        size = std::min(bytes - offset, static_cast<size_t>(DATA_BYTES_MAX_LEN));
+        recvBytes = recvfrom(tempbuf, size, flags, addr, addrLen);
         if (recvBytes)
             std::memcpy(buf + (offset / sizeof(float)), tempbuf, recvBytes);
         offset += recvBytes;
     } while (recvBytes != 0 && offset < bytes);
-    return recvBytes / sizeof(float);
+    return offset / sizeof(float);
 }
 
 inline size_t Socket::cmp(size_t n1, size_t n2) const {
@@ -256,7 +266,7 @@ void Socket::setsockopt(int level, int optname, const void* optval, socklen_t op
 
 #ifdef _WIN32
     if (retval == SOCKET_ERROR)
-#elifdef __linux__
+#else
     if (retval == -1)
 #endif
         throw std::runtime_error("setsockopt");
@@ -267,7 +277,7 @@ void Socket::getsockopt(int level, int optname, void* optval, socklen_t* optlen)
 
 #ifdef _WIN32
     if (retval == SOCKET_ERROR)
-#elifdef __linux__
+#else
     if (retval == -1)
 #endif
         throw std::runtime_error("getsockopt");
@@ -282,7 +292,7 @@ netsize_t Socket::send(const char* buf, size_t count, int flags) const {
             return 0;
         throw std::runtime_error("send");
     }
-#elifdef __linux__
+#else
     if (sendBytes == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return 0;
@@ -301,14 +311,13 @@ netsize_t Socket::recv(char* buf, size_t count, int flags) const {
             return 0;
         throw std::runtime_error("recv");
     }
-#elifdef __linux__
+#else
     if (recvBytes == -1) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return 0;
         throw std::runtime_error("recv");
     }
 #endif
-    throw std::runtime_error("recv");
     return recvBytes;
 }
 
@@ -320,51 +329,19 @@ void Socket::swap(Socket& sock) noexcept {
     std::swap(refCount_, sock.refCount_);
 }
 
-void Socket::send(const std::string& buf, int flags) const {
-    Socket::send(buf.c_str(), buf.length(), flags);
+netsize_t Socket::send(const std::string& buf, int flags) const {
+    return Socket::send(buf.c_str(), buf.length(), flags);
 }
 
 std::string Socket::recv(int flags) const {
     std::string bufRes;
     char buf[DATA_BYTES_MAX_LEN];
     netsize_t cbytes;
+    bufRes.reserve(DATA_BYTES_MAX_LEN);
 
     while ((cbytes = Socket::recv(buf, DATA_BYTES_MAX_LEN - 1, flags))) {
         buf[cbytes] = '\0';
-        bufRes.reserve(bufRes.length() + cbytes);
         bufRes += buf;
     }
     return bufRes;
-}
-
-template <bool remote = false>
-in_addr_t Socket::ip() const {
-    sockaddr_in sin;
-    socklen_t len = sizeof(sockaddr_in);
-    getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
-    return sin.sin_addr.s_addr;
-}
-
-template <>
-in_addr_t Socket::ip<true>() const {
-    sockaddr_in sin;
-    socklen_t len = sizeof(sockaddr_in);
-    getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
-    return sin.sin_addr.s_addr;
-}
-
-template <bool remote = false>
-in_port_t Socket::port() const {
-    sockaddr_in sin;
-    socklen_t len = sizeof(sockaddr_in);
-    getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
-    return sin.sin_port;
-}
-
-template <>
-in_port_t Socket::port<true>() const {
-    sockaddr_in sin;
-    socklen_t len = sizeof(sockaddr_in);
-    getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
-    return sin.sin_port;
 }

@@ -4,21 +4,21 @@
 #include <memory>
 #include <utility>
 
-namespace containers {
-
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2def.h>
 #include <ws2tcpip.h>
 
 using netsize_t = int;
-#elifdef __linux__
+#else
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 
 using netsize_t = ssize_t;
 #endif
+
+namespace containers {
 
 #define DATA_BYTES_MAX_LEN 1400
 #define DATA_FLOAT_LEN (DATA_BYTES_MAX_LEN / sizeof(float))
@@ -31,7 +31,7 @@ class Socket final {
 #ifdef _WIN32
     WSADATA wsaData_;
     SOCKET sfd_{~0};
-#elifdef __linux__
+#else
     int sfd_{-1};
 #endif
     Counter refCount_;
@@ -46,7 +46,6 @@ class Socket final {
     Socket& operator=(const Socket& sock);
     Socket& operator=(Socket&& sock) noexcept;
 
-    bool isValid() const noexcept;
     int getType() const;
 
     void create(int domain, int type, int protocol);
@@ -54,7 +53,7 @@ class Socket final {
 
 #ifdef _WIN32
     SOCKET getRaw() const;
-#elifdef __linux__
+#else
     int getRaw() const;
 #endif
 
@@ -70,21 +69,47 @@ class Socket final {
     void setsockopt(int level, int optname, const void* optval, socklen_t optlen) const;
     void getsockopt(int level, int optname, void* optval, socklen_t* optlen) const;
 
-    void send(const std::string& buf, int flags) const;
+    netsize_t send(const std::string& buf, int flags = 0) const;
     netsize_t send(const char* buf, size_t count, int flags) const;
     netsize_t sendto(const char* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen = 0) const;
     netsize_t sendto(const float* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen = 0) const;
 
-    std::string recv(int flags) const;
+    std::string recv(int flags = 0) const;
     netsize_t recv(char* buf, size_t count, int flags) const;
     netsize_t recvfrom(char* buf, size_t count, int flags, sockaddr* addr, socklen_t* addrLen) const;
     netsize_t recvfrom(float* buf, size_t count, int flags, sockaddr* addr, socklen_t* addrLen) const;
 
     template <bool remote = false>
-    in_addr_t ip() const;
+    in_addr_t ip() const {
+        sockaddr_in sin;
+        socklen_t len = sizeof(sockaddr_in);
+        getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
+        return sin.sin_addr.s_addr;
+    }
+
+    template <>
+    in_addr_t ip<true>() const {
+        sockaddr_in sin;
+        socklen_t len = sizeof(sockaddr_in);
+        getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
+        return sin.sin_addr.s_addr;
+    }
 
     template <bool remote = false>
-    in_port_t port() const;
+    in_port_t port() const {
+        sockaddr_in sin;
+        socklen_t len = sizeof(sockaddr_in);
+        getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
+        return sin.sin_port;
+    }
+
+    template <>
+    in_port_t port<true>() const {
+        sockaddr_in sin;
+        socklen_t len = sizeof(sockaddr_in);
+        getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
+        return sin.sin_port;
+    }
 
     operator auto() const { return sfd_; }
 
@@ -93,7 +118,7 @@ class Socket final {
     explicit Socket(int fd);
 #endif
     void swap(Socket& sock) noexcept;
-
+    bool isValid() const noexcept;
     size_t cmp(size_t n1, size_t n2) const;
 };
 
