@@ -2,7 +2,6 @@
 
 #include <memory>
 #include <mutex>
-#include <regex>
 #include <thread>
 #include <unordered_map>
 
@@ -15,18 +14,20 @@
 namespace server {
 struct DataUser {
     containers::Socket sfd;
-    size_t chsSize{0};
+    uint64_t chsSize{0};
+    uint64_t channelIndex{0};
+    bool connectChannel{false};
 
     void operator=(const containers::Socket& fd) { sfd = fd; }
-    void operator=(size_t size) { chsSize = size; }
+    void operator=(size_t size) noexcept { chsSize = size; }
 
     explicit operator containers::Socket() { return sfd; }
-    operator size_t() const { return chsSize; }
+    operator size_t() const noexcept { return chsSize; }
 };
 
 struct ParseInfo {
-    std::smatch& match;
-    containers::Socket& sfd;
+    std::string_view data;
+    std::shared_ptr<DataUser>& du;
 };
 
 class Server {
@@ -64,14 +65,12 @@ class Server {
     void runLoop(std::stop_token stok);
     void fillParse(containers::Parse& p, ParseInfo& pinfo);
 
-    std::string getChannelsIds() const;
-
    private:
     size_t id_;
     std::jthread jt_;
     containers::Epoll ep_;
-    size_t chIdx_{0};
-    std::unordered_map<size_t, std::unique_ptr<Channel>> chs_;
+    uint64_t chIdx_{0};
+    std::unordered_map<uint64_t, std::unique_ptr<Channel>> chs_;
     std::unordered_map<int, std::shared_ptr<DataUser>> sfds_;
 };
 

@@ -21,10 +21,10 @@ class Channel {
     Channel& operator=(const Channel& rhs) = default;
     Channel& operator=(Channel&& rhs) noexcept = default;
 
-    operator size_t() const { return id_; }
+    operator uint64_t() const { return id_; }
 
    protected:
-    size_t id_;
+    uint64_t id_;
 };
 
 class VoiceChannel final : public Channel {
@@ -50,8 +50,8 @@ class VoiceChannel final : public Channel {
     bool empty() const;
     bool contains(in_addr_t addr, in_port_t port) const;
 
-    in_addr_t getIp() const;
-    in_port_t getPort() const;
+    in_addr_t ip() const;
+    in_port_t port() const;
 
    private:
     void runLoop(std::stop_token stok);

@@ -2,6 +2,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <syncstream>
 
 #include "channel.hpp"
 
@@ -19,11 +20,11 @@ void VoiceChannel::erase(in_addr_t addr, in_port_t port) {
     users_.erase(std::pair<in_addr_t, in_port_t>{addr, port});
 }
 
-in_addr_t VoiceChannel::getIp() const {
+in_addr_t VoiceChannel::ip() const {
     return sfd_.ip();
 }
 
-in_port_t VoiceChannel::getPort() const {
+in_port_t VoiceChannel::port() const {
     return sfd_.port();
 }
 
@@ -67,23 +68,18 @@ bool VoiceChannel::contains(in_addr_t addr, in_port_t port) const {
 }
 
 void VoiceChannel::runLoop(std::stop_token stok) {
-    try {
-        float data[DATA_FLOAT_LEN];
-        sockaddr_in sinrecv, sinsend;
-        socklen_t len;
+    float data[DATA_FLOAT_LEN];
+    sockaddr_in sinrecv, sinsend;
+    socklen_t len;
 
-        std::memset(&sinsend, 0, sizeof(sockaddr_in));
-        sinsend.sin_family = AF_INET;
+    std::memset(&sinsend, 0, sizeof(sockaddr_in));
+    sinsend.sin_family = AF_INET;
 
-        while (!stok.stop_requested()) {
-            len = sizeof(sockaddr_in);
-            netsize_t count;
-            try {
-                count = sfd_.recvfrom(data, DATA_FLOAT_LEN, 0, reinterpret_cast<sockaddr*>(&sinrecv), &len);
-            } catch (const std::exception& e) {
-                std::cout << "Error recvfrom in loop voice channel!\n";
-                continue;
-            }
+    while (!stok.stop_requested()) {
+        len = sizeof(sockaddr_in);
+        netsize_t count;
+        try {
+            count = sfd_.recvfrom(data, DATA_FLOAT_LEN, 0, reinterpret_cast<sockaddr*>(&sinrecv), &len);
             if (!count || len != sizeof(sockaddr_in)) {
                 std::this_thread::yield();
                 continue;
@@ -93,22 +89,24 @@ void VoiceChannel::runLoop(std::stop_token stok) {
             auto usIt = users_.find(u);
             if (usIt == users_.end())
                 continue;
-            try {
-                for (auto it = users_.begin(); it != usIt; ++it) {
-                    sinsend.sin_addr.s_addr = it->first;
-                    sinsend.sin_port = it->second;
+            for (auto it = users_.begin(); it != usIt; ++it) {
+                sinsend.sin_addr.s_addr = it->first;
+                sinsend.sin_port = it->second;
+                try {
                     sfd_.sendto(data, count, 0, reinterpret_cast<sockaddr*>(&sinsend), sizeof(sockaddr_in));
+                } catch (const std::runtime_error& re) {
                 }
-                for (auto it = ++usIt, end = users_.end(); it != end; ++it) {
-                    sinsend.sin_addr.s_addr = it->first;
-                    sinsend.sin_port = it->second;
-                    sfd_.sendto(data, count, 0, reinterpret_cast<sockaddr*>(&sinsend), sizeof(sockaddr_in));
-                }
-            } catch (const std::exception& e) {
-                std::cout << "Error sendto in loop voice channel!\n";
             }
+            for (auto it = ++usIt, end = users_.end(); it != end; ++it) {
+                sinsend.sin_addr.s_addr = it->first;
+                sinsend.sin_port = it->second;
+                try {
+                    sfd_.sendto(data, count, 0, reinterpret_cast<sockaddr*>(&sinsend), sizeof(sockaddr_in));
+                } catch (const std::runtime_error& re) {
+                }
+            }
+        } catch (const std::exception& e) {
+            std::osyncstream(std::cerr) << e.what() << '\n';
         }
-    } catch (const std::exception& e) {
-        std::cout << e.what();
     }
 }

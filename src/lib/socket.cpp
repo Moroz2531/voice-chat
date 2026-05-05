@@ -329,8 +329,8 @@ void Socket::swap(Socket& sock) noexcept {
     std::swap(refCount_, sock.refCount_);
 }
 
-netsize_t Socket::send(const std::string& buf, int flags) const {
-    return Socket::send(buf.c_str(), buf.length(), flags);
+netsize_t Socket::send(const std::string_view buf, int flags) const {
+    return Socket::send(buf.data(), buf.length(), flags);
 }
 
 std::string Socket::recv(int flags) const {

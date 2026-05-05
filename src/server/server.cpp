@@ -1,6 +1,8 @@
 #include <iostream>
 #include <stdexcept>
+#include <syncstream>
 #include <utility>
+#include <vector>
 
 #include "server.hpp"
 
@@ -34,8 +36,10 @@ void Server::insert(const containers::Socket& sfd) {
 }
 
 void Server::erase(const containers::Socket& sfd) {
-    ep_.erase(sfd);
-    sfds_.erase(sfd);
+    if (contains(sfd)) {
+        ep_.erase(sfd);
+        sfds_.erase(sfd);
+    }
 }
 
 size_t Server::size() const {
@@ -53,80 +57,116 @@ bool Server::contains(const containers::Socket& sfd) const {
 void Server::runLoop(std::stop_token stok) {
     try {
         epoll_event evs[Options::MAX_EVENTS];
-        std::regex re(R"(\b[1-9]+[0-9]*\b)");
         containers::Socket sfd;
         std::string data;
-        std::smatch match;
+        std::shared_ptr<DataUser> du;
+
         containers::Parse p;
-        ParseInfo pinfo{match, sfd};
+        ParseInfo pinfo{data, du};
 
         data.reserve(DATA_BYTES_MAX_LEN);
         fillParse(p, pinfo);
 
+        auto handleInput = [&] {
+            data = sfd.recv();
+            if (data.length() >= 2) {
+                uint16_t op;
+                std::memcpy(&op, data.data(), 2);
+                p.execute(op);
+            } else
+                throw std::out_of_range("server (loop): receive incorrect message from client (-1)");
+        };
+
+        auto handleOutput = [&] {
+            if (*du != chs_.size()) {
+                try {
+                    std::vector<char> ids;
+                    ids.reserve(2 + chs_.size() * sizeof(uint64_t));
+                    ids.push_back(0);
+                    ids.push_back(10);
+                    for (auto& [first, second] : chs_) {
+                        char* bytes = reinterpret_cast<char*>(&second);
+                        ids.insert(ids.end(), bytes, bytes + sizeof(uint64_t));
+                    }
+                    sfd.send(ids.data(), ids.size(), 0);
+                    *du = chs_.size();
+                } catch (const std::runtime_error& re) {
+                    throw;
+                } catch (const std::exception& e) {
+                    std::osyncstream(std::cerr) << e.what() << '\n';
+                }
+            }
+            if (du->connectChannel) {
+                in_port_t port = static_cast<VoiceChannel>(*chs_[du->channelIndex]).port();
+                char* bytes = reinterpret_cast<char*>(port);
+                char data[4] = {0, 11, bytes[0], bytes[1]};
+                sfd.send(data, sizeof(data), 0);
+                *du = chs_.size();
+                du->connectChannel = false;
+            }
+        };
+
         while (!stok.stop_requested()) {
             int c = ep_.wait(evs, Options::MAX_EVENTS, Options::TIMEOUT_MS);
             for (int i = 0; i < c; ++i) {
-                auto& dataUser = *sfds_[evs[i].data.fd];
-                sfd = static_cast<containers::Socket>(dataUser);
-                if (evs[i].events & (EPOLLIN | EPOLLRDHUP)) {
-                    try {
-                        data = sfd.recv();
-                        if (std::regex_search(data, match, re))
-                            p.execute(std::stoul(match[0]));
-                    } catch (const std::exception& e) {
-                        std::cerr << e.what();
-                    }
-                    data.clear();
-                }
-                if (evs[i].events & EPOLLOUT) {
-                    if (dataUser != chs_.size())
-                        try {
-                            sfd.send("10 " + getChannelsIds());
-                            dataUser = chs_.size();
-                        } catch (const std::exception& e) {
-                            std::cerr << e.what();
-                        }
-                }
-                if (evs[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP)) {
-                    ep_.erase(sfd);
-                    sfds_.erase(sfd);
-                    sfd.close();
-                    continue;
+                du = sfds_[evs[i].data.fd];
+                sfd = static_cast<containers::Socket>(*du);
+                try {
+                    if (evs[i].events & (EPOLLIN | EPOLLRDHUP))
+                        handleInput();
+                    if (evs[i].events & EPOLLOUT)
+                        handleOutput();
+                    if (evs[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))
+                        erase(sfd);
+                } catch (const std::out_of_range& oor) {
+                    std::osyncstream(std::cerr) << oor.what() << '\n';
+                } catch (const std::runtime_error& re) {
+                    erase(sfd);
+                    std::osyncstream(std::cerr) << re.what() << '\n';
+                } catch (const std::exception& e) {
+                    std::osyncstream(std::cout) << e.what() << '\n';
                 }
             }
         }
     } catch (const std::exception& e) {
-        std::cout << e.what();
+        std::osyncstream(std::cout) << e.what() << '\n';
     }
 }
 
 void Server::fillParse(containers::Parse& p, ParseInfo& pinfo) {
-    // p.insert(3, [&] {});
     p.insert(5, [&] {
-        if (pinfo.match[1].str().empty())
-            throw std::runtime_error("server (loop): invalid message from client!");
-        auto ch = static_cast<VoiceChannel>(*chs_[std::stoul(pinfo.match[1])]);
-        ch.insert(pinfo.sfd.ip(), pinfo.sfd.port());
-        if (!ch.joinable())
-            ch.run();
-    });
-    p.insert(6, [&] {
-        auto ch = static_cast<VoiceChannel>(*chs_[std::stoul(pinfo.match[1])]);
-        ch.erase(pinfo.sfd.ip(), pinfo.sfd.port());
-        if (ch.empty())
-            ch.stop();
+        if (pinfo.data.length() != 17)
+            throw std::out_of_range("server (loop): receive incorrect message from client (5)");
+        uint64_t chId;
+        in_addr_t ip;
+        in_port_t port;
+        char act;
+        std::memcpy(&chId, pinfo.data.data() + 2, 8);
+        std::memcpy(&ip, pinfo.data.data() + 10, 4);
+        std::memcpy(&port, pinfo.data.data() + 14, 2);
+        std::memcpy(&act, pinfo.data.data() + 16, 1);
+        auto ch = static_cast<VoiceChannel>(*chs_[chId]);
+        if (act) {
+            ch.insert(ip, port);
+            if (!ch.joinable())
+                ch.run();
+            pinfo.du->connectChannel = true;
+            pinfo.du->channelIndex = chId;
+        } else {
+            ch.erase(ip, port);
+            if (ch.empty())
+                ch.stop();
+        }
     });
     p.insert(7, [&] {
         chs_.insert(std::pair<size_t, std::unique_ptr<Channel>>{chIdx_, std::make_unique<VoiceChannel>(chIdx_)});
         ++chIdx_;
     });
-    p.insert(8, [&] { chs_.erase(std::stoul(pinfo.match[1])); });
-}
-
-std::string Server::getChannelsIds() const {
-    std::string ids;
-    for (auto& [first, second] : chs_) {
-        ids += *second + ' ';
-    }
-    return ids;
+    p.insert(8, [&] {
+        if (pinfo.data.length() != 10)
+            throw std::out_of_range("server (loop): receive incorrect message from client (8)");
+        uint64_t chId;
+        std::memcpy(&chId, pinfo.data.data() + 2, 8);
+        chs_.erase(chId);
+    });
 }

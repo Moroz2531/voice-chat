@@ -69,7 +69,7 @@ class Socket final {
     void setsockopt(int level, int optname, const void* optval, socklen_t optlen) const;
     void getsockopt(int level, int optname, void* optval, socklen_t* optlen) const;
 
-    netsize_t send(const std::string& buf, int flags = 0) const;
+    netsize_t send(const std::string_view buf, int flags = 0) const;
     netsize_t send(const char* buf, size_t count, int flags) const;
     netsize_t sendto(const char* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen = 0) const;
     netsize_t sendto(const float* buf, size_t count, int flags, const sockaddr* addr, socklen_t addrLen = 0) const;
