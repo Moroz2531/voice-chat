@@ -61,7 +61,7 @@ class Socket final {
     void listen(int queue = LISTEN_QUEUE_LEN) const;
     void connect(const sockaddr* addr, socklen_t addrLen) const;
 
-    Socket accept(sockaddr* addr, socklen_t* addrLen) const;
+    Socket accept(sockaddr* addr = nullptr, socklen_t* addrLen = nullptr) const;
 
     void getsockname(sockaddr* addr, socklen_t* addrLen) const;
     void getpeername(sockaddr* addr, socklen_t* addrLen) const;

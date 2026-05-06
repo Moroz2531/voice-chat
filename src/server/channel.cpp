@@ -43,6 +43,7 @@ void VoiceChannel::run() {
 
 void VoiceChannel::stop() {
     if (jt_.joinable()) {
+        sfd_.close();
         jt_.request_stop();
         jt_.join();
     }

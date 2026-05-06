@@ -116,7 +116,7 @@ Socket Socket::accept(sockaddr* addr, socklen_t* addrLen) const {
     int sfd;
     do {
         if ((sfd = ::accept(sfd_, addr, addrLen)) == -1) {
-            if (errno == ECONNABORTED || errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED || errno == EINTR) {
                 std::this_thread::yield();
                 continue;
             }

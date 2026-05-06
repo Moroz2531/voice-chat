@@ -25,7 +25,7 @@ struct DataUser {
     operator size_t() const noexcept { return chsSize; }
 };
 
-struct ParseInfo {
+struct ParseInfoSV {
     std::string_view data;
     std::shared_ptr<DataUser>& du;
 };
@@ -46,7 +46,7 @@ class Server {
     Server& operator=(Server&& rhs) noexcept = delete;
 
    public:
-    operator size_t() const noexcept { return id_; }
+    operator uint64_t() const noexcept { return id_; }
 
    public:
     void run();
@@ -63,10 +63,10 @@ class Server {
 
    private:
     void runLoop(std::stop_token stok);
-    void fillParse(containers::Parse& p, ParseInfo& pinfo);
+    void fillParse(containers::Parse& p, ParseInfoSV& pinfo);
 
    private:
-    size_t id_;
+    uint64_t id_;
     std::jthread jt_;
     containers::Epoll ep_;
     uint64_t chIdx_{0};

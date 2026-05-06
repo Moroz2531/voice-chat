@@ -62,7 +62,7 @@ void Server::runLoop(std::stop_token stok) {
         std::shared_ptr<DataUser> du;
 
         containers::Parse p;
-        ParseInfo pinfo{data, du};
+        ParseInfoSV pinfo{data, du};
 
         data.reserve(DATA_BYTES_MAX_LEN);
         fillParse(p, pinfo);
@@ -143,7 +143,7 @@ void Server::runLoop(std::stop_token stok) {
     }
 }
 
-void Server::fillParse(containers::Parse& p, ParseInfo& pinfo) {
+void Server::fillParse(containers::Parse& p, ParseInfoSV& pinfo) {
     p.insert(5, [&] {
         if (pinfo.data.length() != 17)
             throw std::out_of_range("server (loop): receive incorrect message from client (5)");
