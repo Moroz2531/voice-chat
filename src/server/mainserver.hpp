@@ -1,29 +1,36 @@
 #pragma once
 
-#include <vector>
+#include <netinet/in.h>
+#include <thread>
+#include <unordered_map>
 
+#include "general/parse.hpp"
+#include "lib/epoll.hpp"
 #include "lib/socket.hpp"
+#include "server.hpp"
 
 namespace server {
+
 class MainServer {
    public:
     MainServer();
-    MainServer(const MainServer& other) = delete;
-    MainServer(MainServer&& other) noexcept;
-    ~MainServer();
-
-    MainServer& operator=(const MainServer& rhs) = delete;
-    MainServer& operator=(MainServer&& rhs) noexcept;
 
    public:
-    void add(...&& sv);
-    void remove(...);
+    void run();
+    void stop();
+    bool joinable() const noexcept;
 
    public:
-    std::string ip() const;
-    ... port() const;
+    in_addr_t ip() const;
+    in_port_t port() const;
 
    private:
-    containers::Socket fdsv_;
+    void runLoop(std::stop_token stok);
+
+   private:
+    std::jthread jt_;
+    containers::Socket sfdAccpt_;
+    Server sv{0};
 };
+
 }  // namespace server
