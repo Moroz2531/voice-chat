@@ -206,8 +206,11 @@ netsize_t Socket::sendto(const char* buf, size_t count, int flags, const sockadd
     }
 #else
     if (sendBytes == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             return 0;
+        if (errno == ECONNRESET || errno == ECONNREFUSED || errno == EHOSTUNREACH || errno == ENETUNREACH ||
+            errno == EPIPE || errno == ENETDOWN)
+            return -1;
         throw std::runtime_error("sendto");
     }
 #endif
@@ -224,8 +227,10 @@ netsize_t Socket::recvfrom(char* buf, size_t count, int flags, sockaddr* addr, s
     }
 #else
     if (recvBytes == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             return 0;
+        if (errno == ECONNRESET)
+            return -1;
         throw std::runtime_error("recvfrom");
     }
 #endif
@@ -249,16 +254,13 @@ netsize_t Socket::recvfrom(float* buf, size_t count, int flags, sockaddr* addr, 
 
     do {
         size = std::min(bytes - offset, static_cast<size_t>(DATA_BYTES_MAX_LEN));
-        recvBytes = recvfrom(tempbuf, size, flags, addr, addrLen);
-        if (recvBytes)
+        if ((recvBytes = recvfrom(tempbuf, size, flags, addr, addrLen)) == -1)
+            return -1;
+        if (recvBytes > 0)
             std::memcpy(buf + (offset / sizeof(float)), tempbuf, recvBytes);
         offset += recvBytes;
-    } while (recvBytes != 0 && offset < bytes);
+    } while (recvBytes > 0 && offset < bytes);
     return offset / sizeof(float);
-}
-
-inline size_t Socket::cmp(size_t n1, size_t n2) const {
-    return (n1 < n2) ? n1 : n2;
 }
 
 void Socket::setsockopt(int level, int optname, const void* optval, socklen_t optlen) const {
@@ -294,8 +296,10 @@ netsize_t Socket::send(const char* buf, size_t count, int flags) const {
     }
 #else
     if (sendBytes == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             return 0;
+        if (errno == ECONNRESET || errno == ECONNREFUSED || errno == EPIPE)
+            return -1;
         throw std::runtime_error("send");
     }
 #endif
@@ -313,8 +317,10 @@ netsize_t Socket::recv(char* buf, size_t count, int flags) const {
     }
 #else
     if (recvBytes == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK)
+        if (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)
             return 0;
+        if (errno == ECONNRESET)
+            return -1;
         throw std::runtime_error("recv");
     }
 #endif
@@ -339,7 +345,9 @@ std::string Socket::recv(int flags) const {
     netsize_t cbytes;
     bufRes.reserve(DATA_BYTES_MAX_LEN);
 
-    while ((cbytes = Socket::recv(buf, DATA_BYTES_MAX_LEN - 1, flags))) {
+    while ((cbytes = Socket::recv(buf, DATA_BYTES_MAX_LEN - 1, flags)) > 0) {
+        if (cbytes == -1)
+            throw std::runtime_error("socket: error in recv");
         buf[cbytes] = '\0';
         bufRes += buf;
     }

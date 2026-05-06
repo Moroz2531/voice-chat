@@ -75,6 +75,7 @@ void Server::runLoop(std::stop_token stok) {
                 p.execute(op);
             } else
                 throw std::out_of_range("server (loop): receive incorrect message from client (-1)");
+            return 0;
         };
 
         auto handleOutput = [&] {
@@ -88,7 +89,8 @@ void Server::runLoop(std::stop_token stok) {
                         char* bytes = reinterpret_cast<char*>(&second);
                         ids.insert(ids.end(), bytes, bytes + sizeof(uint64_t));
                     }
-                    sfd.send(ids.data(), ids.size(), 0);
+                    if (sfd.send(ids.data(), ids.size(), 0))
+                        return -1;
                     *du = chs_.size();
                 } catch (const std::runtime_error& re) {
                     throw;
@@ -100,10 +102,12 @@ void Server::runLoop(std::stop_token stok) {
                 in_port_t port = static_cast<VoiceChannel>(*chs_[du->channelIndex]).port();
                 char* bytes = reinterpret_cast<char*>(port);
                 char data[4] = {0, 11, bytes[0], bytes[1]};
-                sfd.send(data, sizeof(data), 0);
+                if (sfd.send(data, sizeof(data), 0))
+                    return -1;
                 *du = chs_.size();
                 du->connectChannel = false;
             }
+            return 0;
         };
 
         while (!stok.stop_requested()) {
@@ -113,9 +117,15 @@ void Server::runLoop(std::stop_token stok) {
                 sfd = static_cast<containers::Socket>(*du);
                 try {
                     if (evs[i].events & (EPOLLIN | EPOLLRDHUP))
-                        handleInput();
+                        if (handleInput()) {
+                            erase(sfd);
+                            continue;
+                        }
                     if (evs[i].events & EPOLLOUT)
-                        handleOutput();
+                        if (handleOutput()) {
+                            erase(sfd);
+                            continue;
+                        }
                     if (evs[i].events & (EPOLLERR | EPOLLHUP | EPOLLRDHUP))
                         erase(sfd);
                 } catch (const std::out_of_range& oor) {

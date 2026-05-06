@@ -119,7 +119,6 @@ class Socket final {
 #endif
     void swap(Socket& sock) noexcept;
     bool isValid() const noexcept;
-    size_t cmp(size_t n1, size_t n2) const;
 };
 
 }  // namespace containers
