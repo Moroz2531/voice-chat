@@ -1,1 +1,3 @@
 .vscode
+qt/chat/build
+qt/chat/CMakeLists.txt.*
