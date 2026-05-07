@@ -17,7 +17,7 @@ struct DataUser {
   uint64_t channelIndex{0};
   bool connectChannel{false}, procReq{false};
 
-  void operator=(const containers::Socket &fd) { sfd = fd; }
+  void operator=(const containers::Socket& fd) { sfd = fd; }
   void operator=(size_t size) noexcept { chsSize = size; }
 
   explicit operator containers::Socket() { return sfd; }
@@ -26,7 +26,7 @@ struct DataUser {
 
 struct ParseInfo {
   std::string_view data;
-  std::shared_ptr<DataUser> &du;
+  std::shared_ptr<DataUser>& du;
 };
 
 class Server {
@@ -35,36 +35,36 @@ class Server {
     TIMEOUT_MS = 1,
   };
 
-public:
+ public:
   Server(size_t id);
-  Server(const Server &other) = delete;
-  Server(Server &&other) noexcept = delete;
+  Server(const Server& other) = delete;
+  Server(Server&& other) noexcept = delete;
   ~Server() { stop(); }
 
-  Server &operator=(const Server &rhs) = delete;
-  Server &operator=(Server &&rhs) noexcept = delete;
+  Server& operator=(const Server& rhs) = delete;
+  Server& operator=(Server&& rhs) noexcept = delete;
 
-public:
+ public:
   operator uint64_t() const noexcept { return id_; }
 
-public:
+ public:
   void run();
   void stop();
   bool joinable() const noexcept;
 
-public:
-  void insert(const containers::Socket &sfd);
-  void erase(const containers::Socket &sfd);
+ public:
+  void insert(const containers::Socket& sfd);
+  void erase(const containers::Socket& sfd);
 
   size_t size() const;
   bool empty() const;
-  bool contains(const containers::Socket &sfd) const;
+  bool contains(const containers::Socket& sfd) const;
 
-private:
+ private:
   void runLoop(std::stop_token stok);
-  void fillParse(containers::Parse &p, ParseInfo &pinfo);
+  void fillParse(containers::Parse& p, ParseInfo& pinfo);
 
-private:
+ private:
   size_t id_;
   std::jthread jt_;
   containers::Epoll ep_;
@@ -73,4 +73,4 @@ private:
   std::unordered_map<int, std::shared_ptr<DataUser>> sfds_;
 };
 
-} // namespace server
+}  // namespace server

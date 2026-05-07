@@ -18,23 +18,23 @@ Client::Client() {
 
   p_.insert(5, [&] {
     Data data{5, vstream_, vstream_.port(), 0xFF};
-    sfd_.send(reinterpret_cast<char *>(&data), sizeof(data), 0);
+    sfd_.send(reinterpret_cast<char*>(&data), sizeof(data), 0);
   });
 
   p_.insert(6, [&] {
     Data data{5, vstream_, vstream_.port(), 0};
-    sfd_.send(reinterpret_cast<char *>(&data), sizeof(data), 0);
+    sfd_.send(reinterpret_cast<char*>(&data), sizeof(data), 0);
     vstream_.stop();
   });
 
   p_.insert(7, [&] {
     uint16_t op = 7;
-    sfd_.send(reinterpret_cast<char *>(op), sizeof(op), 0);
+    sfd_.send(reinterpret_cast<char*>(op), sizeof(op), 0);
   });
 
   p_.insert(8, [&] {
     Data data{8, chErase_};
-    sfd_.send(reinterpret_cast<char *>(&data),
+    sfd_.send(reinterpret_cast<char*>(&data),
               sizeof(uint16_t) + sizeof(uint64_t), 0);
   });
 };
@@ -50,7 +50,7 @@ void Client::connect(in_addr_t ip, in_port_t port) {
   sv.sin_port = port;
 
   sfd_.create(AF_INET, SOCK_STREAM, 0);
-  sfd_.connect(reinterpret_cast<sockaddr *>(&sv), sizeof(sockaddr_in));
+  sfd_.connect(reinterpret_cast<sockaddr*>(&sv), sizeof(sockaddr_in));
 
   epoll_event ev;
   ev.events = EPOLLIN | EPOLLOUT | EPOLLERR;
@@ -100,7 +100,9 @@ void Client::disconnectStream() {
   }
 }
 
-bool Client::isConnectedStream() const noexcept { return vstream_.joinable(); }
+bool Client::isConnectedStream() const noexcept {
+  return vstream_.joinable();
+}
 
 void Client::runLoop(std::stop_token stok) {
   try {
@@ -137,7 +139,7 @@ void Client::runLoop(std::stop_token stok) {
               std::memcpy(&op, data.data(), 2);
               p_.execute(op);
             }
-          } catch (const std::exception &e) {
+          } catch (const std::exception& e) {
             std::osyncstream(std::cerr) << e.what() << '\n';
           }
         }
@@ -150,7 +152,7 @@ void Client::runLoop(std::stop_token stok) {
         }
       }
     }
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     std::osyncstream(std::cerr) << e.what() << '\n';
   }
 }

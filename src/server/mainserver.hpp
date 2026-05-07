@@ -12,25 +12,25 @@
 namespace server {
 
 class MainServer {
-   public:
-    MainServer();
+ public:
+  MainServer();
 
-   public:
-    void run();
-    void stop();
-    bool joinable() const noexcept;
+ public:
+  void run();
+  void stop();
+  bool joinable() const noexcept;
 
-   public:
-    in_addr_t ip() const;
-    in_port_t port() const;
+ public:
+  in_addr_t ip() const;
+  in_port_t port() const;
 
-   private:
-    void runLoop(std::stop_token stok);
+ private:
+  void runLoop(std::stop_token stok);
 
-   private:
-    std::jthread jt_;
-    containers::Socket sfdAccpt_;
-    Server sv{0};
+ private:
+  std::jthread jt_;
+  containers::Socket sfdAccpt_;
+  Server sv{0};
 };
 
 }  // namespace server

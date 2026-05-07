@@ -20,7 +20,7 @@ VoiceStream::VoiceStream() {
   sin.sin_port = 0;
 
   sfd_.create(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
-  sfd_.bind(reinterpret_cast<sockaddr *>(&sin), sizeof(sin));
+  sfd_.bind(reinterpret_cast<sockaddr*>(&sin), sizeof(sin));
 
   epoll_event ev;
   ev.events = EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLET;
@@ -35,7 +35,7 @@ void VoiceStream::run(in_addr_t ip, in_port_t port) {
   sin.sin_family = AF_INET;
   sin.sin_addr.s_addr = ip;
   sin.sin_port = port;
-  sfd_.connect(reinterpret_cast<sockaddr *>(&sin), sizeof(sin));
+  sfd_.connect(reinterpret_cast<sockaddr*>(&sin), sizeof(sin));
   jt_ = std::jthread([&](std::stop_token stok) { runLoop(stok); });
 }
 
@@ -46,7 +46,9 @@ void VoiceStream::stop() {
   }
 }
 
-bool VoiceStream::joinable() const noexcept { return jt_.joinable(); }
+bool VoiceStream::joinable() const noexcept {
+  return jt_.joinable();
+}
 
 void VoiceStream::runLoop(std::stop_token stok) {
   constexpr auto numChannels = 1;
@@ -66,10 +68,10 @@ void VoiceStream::runLoop(std::stop_token stok) {
 
   try {
     portaudio::AutoSystem autoSystem;
-    portaudio::System &system = portaudio::System::instance();
+    portaudio::System& system = portaudio::System::instance();
 
-    portaudio::Device &outputDevice = system.defaultOutputDevice();
-    portaudio::Device &inputDevice = system.defaultInputDevice();
+    portaudio::Device& outputDevice = system.defaultOutputDevice();
+    portaudio::Device& inputDevice = system.defaultInputDevice();
 
     portaudio::DirectionSpecificStreamParameters outParams{
         outputDevice,
@@ -91,14 +93,14 @@ void VoiceStream::runLoop(std::stop_token stok) {
     UserData qs{numChannels};
 
     auto callback =
-        [](const void *inputBuffer, void *outputBuffer,
+        [](const void* inputBuffer, void* outputBuffer,
            unsigned long framesPerBuffer,
-           [[maybe_unused]] const PaStreamCallbackTimeInfo *timeInfo,
+           [[maybe_unused]] const PaStreamCallbackTimeInfo* timeInfo,
            [[maybe_unused]] PaStreamCallbackFlags statusFlags,
-           void *userData) -> int {
-      auto in = static_cast<const float *>(inputBuffer);
-      auto out = static_cast<float *>(outputBuffer);
-      auto ud = static_cast<UserData *>(userData);
+           void* userData) -> int {
+      auto in = static_cast<const float*>(inputBuffer);
+      auto out = static_cast<float*>(outputBuffer);
+      auto ud = static_cast<UserData*>(userData);
 
       auto inVolume = ud->inVolume, outVolume = ud->outVolume;
       auto &qin = ud->in, &qout = ud->out;
@@ -132,14 +134,14 @@ void VoiceStream::runLoop(std::stop_token stok) {
         if (ev.events & EPOLLOUT) {
           size_t size;
           if ((size = qs.in.pop(recv, sizeof(recv) / sizeof(float))))
-            sfd_.send(reinterpret_cast<char *>(recv), size, 0);
+            sfd_.send(reinterpret_cast<char*>(recv), size, 0);
         }
         if (ev.events & EPOLLERR)
           throw std::runtime_error("voiceStream (loop): epoll return EPOLLERR");
       }
       std::this_thread::sleep_for(std::chrono::duration<double>(timesleep));
     }
-  } catch (const std::exception &e) {
+  } catch (const std::exception& e) {
     std::osyncstream(std::cerr) << e.what() << '\n';
   }
 }

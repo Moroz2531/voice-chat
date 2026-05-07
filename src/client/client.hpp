@@ -10,24 +10,24 @@
 namespace client {
 
 class VoiceStream {
-public:
+ public:
   VoiceStream();
 
-public:
+ public:
   void run(in_addr_t ip, in_port_t port);
   void stop();
   bool joinable() const noexcept;
 
-public:
+ public:
   uint16_t port() const { return sfd_.port(); }
 
   operator uint64_t() const noexcept { return cid_; }
   void operator=(uint64_t cid) noexcept { cid_ = cid; }
 
-private:
+ private:
   void runLoop(std::stop_token stok);
 
-private:
+ private:
   std::jthread jt_;
   uint64_t cid_{0};
   containers::Socket sfd_;
@@ -37,10 +37,10 @@ private:
 class Client {
   using ServerData = boost::unordered_set<uint64_t>;
 
-public:
+ public:
   Client();
 
-public:
+ public:
   void connect(in_addr_t ip, in_port_t port);
   void disconnect() noexcept;
 
@@ -51,14 +51,14 @@ public:
   void disconnectStream();
   bool isConnectedStream() const noexcept;
 
-public:
+ public:
   size_t sizeChannels() const noexcept { return svdata_.size(); }
-  const ServerData &channels() const noexcept { return svdata_; }
+  const ServerData& channels() const noexcept { return svdata_; }
 
-private:
+ private:
   void runLoop(std::stop_token stok);
 
-private:
+ private:
   std::jthread jt_;
   containers::Socket sfd_;
   containers::Epoll ep_;
@@ -68,4 +68,4 @@ private:
   VoiceStream vstream_;
 };
 
-} // namespace client
+}  // namespace client
