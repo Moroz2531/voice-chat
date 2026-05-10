@@ -1,7 +1,7 @@
 TARGET = server
 
 CXX = clang++
-CXXFLAGS = -O3 -Wall -Werror -Wextra -std=c++20 -I ..
+CXXFLAGS = -Wall -Werror -Wextra -std=c++20 -I .. -O3
 
 LDFLAGS = -L../lib
 LDLIBS = -lsocket -lepoll
@@ -16,7 +16,6 @@ build_libs:
 
 $(TARGET): $(OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDLIBS)
-	strip $(TARGET)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@

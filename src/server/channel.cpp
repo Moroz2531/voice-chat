@@ -1,5 +1,6 @@
 #include <netinet/in.h>
 #include <cstring>
+#include <format>
 #include <iostream>
 #include <stdexcept>
 #include <syncstream>
@@ -8,7 +9,29 @@
 
 using namespace server;
 
-VoiceChannel::VoiceChannel(size_t id) : Channel(id) {}
+namespace {
+template <bool remote = false>
+std::string getIPv4(const containers::Socket& sfd) noexcept {
+  char buf[INET_ADDRSTRLEN];
+  in_addr addr;
+  addr.s_addr = sfd.ip<remote>();
+
+  if (inet_ntop(AF_INET, &addr, buf, sizeof(buf)) == NULL) {
+    return std::string("printIPv4: error inet_ntop");
+  }
+  return std::string(std::format("{}/{}", buf, ntohs(sfd.port<remote>())));
+}
+}  // namespace
+
+VoiceChannel::VoiceChannel(size_t id)
+    : Channel(id), sfd_{AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0} {
+  sockaddr_in sin;
+  std::memset(&sin, 0, sizeof(sockaddr_in));
+  sin.sin_addr.s_addr = INADDR_ANY;
+  sin.sin_family = AF_INET;
+  sin.sin_port = 0;
+  sfd_.bind(reinterpret_cast<sockaddr*>(&sin), sizeof(sockaddr_in));
+}
 
 void VoiceChannel::insert(in_addr_t addr, in_port_t port) {
   std::lock_guard<std::mutex> lock{mut_};
@@ -29,21 +52,15 @@ in_port_t VoiceChannel::port() const {
 }
 
 void VoiceChannel::run() {
+  std::lock_guard<std::mutex> lock{mut_};
   if (jt_.joinable())
     throw std::runtime_error("the channel already is running");
-  sfd_.create(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
-  sockaddr_in sin;
-  std::memset(&sin, 0, sizeof(sockaddr_in));
-  sin.sin_addr.s_addr = INADDR_ANY;
-  sin.sin_family = AF_INET;
-  sin.sin_port = 0;
-  sfd_.bind(reinterpret_cast<sockaddr*>(&sin), sizeof(sockaddr_in));
   jt_ = std::jthread([this](std::stop_token stok) { runLoop(stok); });
 }
 
 void VoiceChannel::stop() {
+  std::lock_guard<std::mutex> lock{mut_};
   if (jt_.joinable()) {
-    sfd_.close();
     jt_.request_stop();
     jt_.join();
   }
@@ -63,10 +80,14 @@ size_t VoiceChannel::size() const {
   return users_.size();
 }
 
+void VoiceChannel::clear() noexcept {
+  std::lock_guard<std::mutex> lock{mut_};
+  users_.clear();
+}
+
 bool VoiceChannel::contains(in_addr_t addr, in_port_t port) const {
   std::lock_guard<std::mutex> lock{mut_};
-  return users_.find(std::pair<in_addr_t, in_port_t>{addr, port}) !=
-         users_.end();
+  return users_.contains(std::pair<in_addr_t, in_port_t>{addr, port});
 }
 
 void VoiceChannel::runLoop(std::stop_token stok) {

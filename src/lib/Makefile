@@ -2,7 +2,7 @@ TARGET_SOCKET = libsocket.a
 TARGET_EPOLL = libepoll.a
 
 CPP = clang++
-CPPFLAGS = -Wall -Werror -Wextra -std=c++20 -O3
+CPPFLAGS = -Wall -Werror -Wextra -std=c++20 -g3
 AR = ar
 ARFLAGS = rcs
 

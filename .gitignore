@@ -1,3 +1,8 @@
 .vscode
 qt/chat/build
 qt/chat/CMakeLists.txt.*
+src/lib/*.a
+src/server/*.o
+src/server/server
+src/client/*.o
+src/client/client

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <netinet/in.h>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 
@@ -14,6 +15,7 @@ namespace server {
 class MainServer {
  public:
   MainServer();
+  ~MainServer() { stop(); }
 
  public:
   void run();
@@ -30,7 +32,7 @@ class MainServer {
  private:
   std::jthread jt_;
   containers::Socket sfdAccpt_;
-  Server sv{0};
+  Server sv_{0};
 };
 
 }  // namespace server

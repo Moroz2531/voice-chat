@@ -55,8 +55,7 @@ int Epoll::wait(epoll_event* evs, int maxevs, int timeout_ms) const {
   if (retval == -1) {
     if (errno == EINTR)
       return 0;
-    else
-      throw(std::system_error());
+    throw(std::system_error());
   }
   return retval;
 }

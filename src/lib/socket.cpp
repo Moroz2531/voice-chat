@@ -77,13 +77,14 @@ Socket& Socket::operator=(Socket&& sock) noexcept {
 }
 
 bool Socket::isValid() const noexcept {
-#ifdef _WIN32
-  if (sfd_ == ~0)
-#else
-  if (sfd_ == -1)
-#endif
+  int error;
+  socklen_t len = sizeof(error);
+  try {
+    getsockopt(SOL_SOCKET, SO_ERROR, &error, &len);
+    return error == 0;
+  } catch (const std::exception& e) {
     return false;
-  return true;
+  }
 }
 
 int Socket::getType() const {
@@ -116,15 +117,17 @@ void Socket::listen(int queue) const {
 }
 
 Socket Socket::accept(sockaddr* addr, socklen_t* addrLen) const {
+  return accept4(addr, addrLen);
+}
+
+Socket Socket::accept4(sockaddr* addr, socklen_t* addrLen, int flags) const {
   int sfd;
   do {
-    if ((sfd = ::accept(sfd_, addr, addrLen)) == -1) {
+    if ((sfd = ::accept4(sfd_, addr, addrLen, flags)) == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK || errno == ECONNABORTED ||
-          errno == EINTR) {
-        std::this_thread::yield();
+          errno == EINTR || errno == EPERM || errno == EPROTO)
         continue;
-      }
-      throw std::runtime_error("accept");
+      throw std::runtime_error("socket: return error in accept");
     }
   } while (sfd == -1);
   try {
@@ -194,10 +197,14 @@ void Socket::connect(const sockaddr* addr, socklen_t addrLen) const {
 
 #ifdef _WIN32
   if (retval == SOCKET_ERROR)
-#else
-  if (retval == -1)
-#endif
     throw std::runtime_error("connect");
+#else
+  if (retval == -1) {
+    if (errno == EINPROGRESS)
+      return;
+    throw std::runtime_error("connect");
+  }
+#endif
 }
 
 netsize_t Socket::sendto(const char* buf,
@@ -326,10 +333,14 @@ netsize_t Socket::send(const char* buf, size_t count, int flags) const {
       return 0;
     if (errno == ECONNRESET || errno == ECONNREFUSED || errno == EPIPE)
       return -1;
-    throw std::runtime_error("send");
+    throw std::runtime_error("socket: error in send");
   }
 #endif
   return sendBytes;
+}
+
+netsize_t Socket::send(const float* buf, size_t count, int flags) const {
+  return sendto(buf, count, flags, nullptr);
 }
 
 netsize_t Socket::recv(char* buf, size_t count, int flags) const {
@@ -369,13 +380,11 @@ std::string Socket::recv(int flags) const {
   std::string bufRes;
   char buf[DATA_BYTES_MAX_LEN];
   netsize_t cbytes;
-  bufRes.reserve(DATA_BYTES_MAX_LEN);
 
   while ((cbytes = Socket::recv(buf, DATA_BYTES_MAX_LEN - 1, flags)) > 0) {
     if (cbytes == -1)
       throw std::runtime_error("socket: error in recv");
-    buf[cbytes] = '\0';
-    bufRes += buf;
+    bufRes.append(buf, cbytes);
   }
   return bufRes;
 }

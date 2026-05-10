@@ -20,7 +20,7 @@ using netsize_t = ssize_t;
 
 namespace containers {
 
-#define DATA_BYTES_MAX_LEN 1400
+#define DATA_BYTES_MAX_LEN 1458
 #define DATA_FLOAT_LEN (DATA_BYTES_MAX_LEN / sizeof(float))
 
 class Socket final {
@@ -62,6 +62,9 @@ class Socket final {
   void connect(const sockaddr* addr, socklen_t addrLen) const;
 
   Socket accept(sockaddr* addr = nullptr, socklen_t* addrLen = nullptr) const;
+  Socket accept4(sockaddr* addr = nullptr,
+                 socklen_t* addrLen = nullptr,
+                 int flags = 0) const;
 
   void getsockname(sockaddr* addr, socklen_t* addrLen) const;
   void getpeername(sockaddr* addr, socklen_t* addrLen) const;
@@ -77,6 +80,7 @@ class Socket final {
 
   netsize_t send(const std::string_view buf, int flags = 0) const;
   netsize_t send(const char* buf, size_t count, int flags) const;
+  netsize_t send(const float* buf, size_t count, int flags) const;
   netsize_t sendto(const char* buf,
                    size_t count,
                    int flags,
@@ -105,15 +109,10 @@ class Socket final {
   in_addr_t ip() const {
     sockaddr_in sin;
     socklen_t len = sizeof(sockaddr_in);
-    getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
-    return sin.sin_addr.s_addr;
-  }
-
-  template <>
-  in_addr_t ip<true>() const {
-    sockaddr_in sin;
-    socklen_t len = sizeof(sockaddr_in);
-    getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
+    if constexpr (!remote)
+      getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
+    else
+      getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
     return sin.sin_addr.s_addr;
   }
 
@@ -121,17 +120,14 @@ class Socket final {
   in_port_t port() const {
     sockaddr_in sin;
     socklen_t len = sizeof(sockaddr_in);
-    getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
+    if constexpr (!remote)
+      getsockname(reinterpret_cast<sockaddr*>(&sin), &len);
+    else
+      getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
     return sin.sin_port;
   }
 
-  template <>
-  in_port_t port<true>() const {
-    sockaddr_in sin;
-    socklen_t len = sizeof(sockaddr_in);
-    getpeername(reinterpret_cast<sockaddr*>(&sin), &len);
-    return sin.sin_port;
-  }
+  bool isValid() const noexcept;
 
   operator auto() const { return sfd_; }
 
@@ -140,7 +136,6 @@ class Socket final {
   explicit Socket(int fd);
 #endif
   void swap(Socket& sock) noexcept;
-  bool isValid() const noexcept;
 };
 
 }  // namespace containers

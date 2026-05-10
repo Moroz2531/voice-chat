@@ -29,7 +29,7 @@ Client::Client() {
 
   p_.insert(7, [&] {
     uint16_t op = 7;
-    sfd_.send(reinterpret_cast<char*>(op), sizeof(op), 0);
+    sfd_.send(reinterpret_cast<char*>(&op), sizeof(op), 0);
   });
 
   p_.insert(8, [&] {
@@ -39,7 +39,7 @@ Client::Client() {
   });
 };
 
-void Client::connect(in_addr_t ip, in_port_t port) {
+bool Client::connect(in_addr_t ip, in_port_t port) {
   if (jt_.joinable())
     throw std::runtime_error("client: stream already is running");
   sockaddr_in sv;
@@ -49,14 +49,20 @@ void Client::connect(in_addr_t ip, in_port_t port) {
   sv.sin_addr.s_addr = ip;
   sv.sin_port = port;
 
-  sfd_.create(AF_INET, SOCK_STREAM, 0);
+  sfd_.create(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
   sfd_.connect(reinterpret_cast<sockaddr*>(&sv), sizeof(sockaddr_in));
 
   epoll_event ev;
   ev.events = EPOLLIN | EPOLLOUT | EPOLLERR;
   ep_.insert(sfd_, ev);
 
+  if (ep_.wait(&ev, 1, 1000)) {
+    if (!sfd_.isValid())
+      return false;
+  } else
+    return false;
   jt_ = std::jthread([&](std::stop_token stok) { runLoop(stok); });
+  return true;
 }
 
 void Client::disconnect() noexcept {
@@ -67,8 +73,10 @@ void Client::disconnect() noexcept {
 void Client::insertChannel() {
   epoll_event ev;
   if (ep_.wait(&ev, 1, 0)) {
-    if (ev.events & EPOLLOUT)
+    if (ev.events & EPOLLOUT) {
+      std::lock_guard lock{mut_};
       p_.execute(7);
+    }
   }
 }
 
@@ -77,6 +85,7 @@ void Client::eraseChannel(uint64_t cid) {
   if (ep_.wait(&ev, 1, 0)) {
     if (ev.events & EPOLLOUT) {
       chErase_ = cid;
+      std::lock_guard lock{mut_};
       p_.execute(8);
     }
   }
@@ -87,6 +96,7 @@ void Client::connectStream(uint64_t cid) {
   if (ep_.wait(&ev, 1, 0)) {
     if (ev.events & EPOLLOUT) {
       vstream_ = cid;
+      std::lock_guard lock{mut_};
       p_.execute(5);
     }
   }
@@ -95,8 +105,10 @@ void Client::connectStream(uint64_t cid) {
 void Client::disconnectStream() {
   epoll_event ev;
   if (ep_.wait(&ev, 1, 0)) {
-    if (ev.events & EPOLLOUT)
+    if (ev.events & EPOLLOUT) {
+      std::lock_guard lock{mut_};
       p_.execute(6);
+    }
   }
 }
 
@@ -113,7 +125,6 @@ void Client::runLoop(std::stop_token stok) {
         throw std::out_of_range("client (loop): incorrect receive message");
       uint64_t chId;
       svdata_.clear();
-      svdata_.reserve((data.size() - 2) / sizeof(uint64_t));
       for (size_t i = 2; i < data.length(); i += sizeof(uint64_t)) {
         std::memcpy(&chId, data.data() + i, sizeof(uint64_t));
         svdata_.insert(chId);
@@ -137,6 +148,7 @@ void Client::runLoop(std::stop_token stok) {
             data = sfd_.recv();
             if (data.length() >= 2) {
               std::memcpy(&op, data.data(), 2);
+              std::lock_guard lock{mut_};
               p_.execute(op);
             }
           } catch (const std::exception& e) {

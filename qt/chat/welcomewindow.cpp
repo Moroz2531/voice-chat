@@ -1,3 +1,4 @@
+#include <QCoreApplication>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QIntValidator>
@@ -7,7 +8,8 @@
 #include "mainwindow.hpp"
 #include "welcomewindow.hpp"
 
-WelcomeWindow::WelcomeWindow(QWidget* parent) : QWidget(parent) {
+WelcomeWindow::WelcomeWindow(client::Client& cl, QWidget* parent)
+    : QWidget(parent), client{cl} {
   setupUI();
   setWindowTitle("Подключение к серверу");
   setFixedSize(400, 200);
@@ -29,22 +31,17 @@ void WelcomeWindow::setupUI() {
   QFormLayout* formLayout = new QFormLayout();
 
   ipLineEdit = new QLineEdit();
-  ipLineEdit->setPlaceholderText("");
-  ipLineEdit->setText("");
   formLayout->addRow("IP адрес:", ipLineEdit);
 
   portLineEdit = new QLineEdit();
-  portLineEdit->setPlaceholderText("");
-  portLineEdit->setText("");
   portLineEdit->setValidator(new QIntValidator(1, 65535, this));
   formLayout->addRow("Порт:", portLineEdit);
 
   mainLayout->addLayout(formLayout);
 
   // Статус подключения
-  statusLabel = new QLabel("");
+  statusLabel = new QLabel();
   statusLabel->setAlignment(Qt::AlignCenter);
-  statusLabel->setStyleSheet("color: gray; margin: 10px;");
   mainLayout->addWidget(statusLabel);
 
   // Кнопка подключения
@@ -70,9 +67,14 @@ void WelcomeWindow::onConnectClicked() {
   QString ip = ipLineEdit->text().trimmed();
   QString portStr = portLineEdit->text().trimmed();
 
+  statusLabel->setStyleSheet("color: gray; margin: 10px;");
+  statusLabel->setText("Подключение...");
+
+  connectButton->setEnabled(false);
   if (ip.isEmpty() || portStr.isEmpty()) {
     statusLabel->setStyleSheet("color: red; margin: 10px;");
     statusLabel->setText("Заполните все поля!");
+    connectButton->setEnabled(true);
     return;
   }
 
@@ -81,14 +83,21 @@ void WelcomeWindow::onConnectClicked() {
   if (!ok || port < 1 || port > 65535) {
     statusLabel->setStyleSheet("color: red; margin: 10px;");
     statusLabel->setText("Некорректный порт!");
+    connectButton->setEnabled(true);
     return;
   }
 
-  // Здесь вы вызываете свою реализацию подключения
-  emit connectRequested(ip, port);
+  QCoreApplication::processEvents();
+
+  if (!client.connect(inet_addr(ip.toUtf8().constData()), htons(port))) {
+    statusLabel->setStyleSheet("color: red; margin: 10px;");
+    statusLabel->setText("Не удалось подключиться!");
+    connectButton->setEnabled(true);
+    return;
+  }
 
   // Создаем и показываем основное окно
-  MainWindow* mainWindow = new MainWindow();
+  MainWindow* mainWindow = new MainWindow(client);
   mainWindow->show();
 
   // Закрываем приветственное окно

@@ -10,6 +10,20 @@
 
 #include "client.hpp"
 
+namespace {
+template <bool remote = false>
+std::string getIPv4(const containers::Socket& sfd) noexcept {
+  char buf[INET_ADDRSTRLEN];
+  in_addr addr;
+  addr.s_addr = sfd.ip<remote>();
+
+  if (inet_ntop(AF_INET, &addr, buf, sizeof(buf)) == NULL) {
+    return std::string("printIPv4: error inet_ntop");
+  }
+  return std::string(std::format("{}/{}", buf, ntohs(sfd.port<remote>())));
+}
+}  // namespace
+
 using namespace client;
 
 VoiceStream::VoiceStream() {
@@ -23,7 +37,7 @@ VoiceStream::VoiceStream() {
   sfd_.bind(reinterpret_cast<sockaddr*>(&sin), sizeof(sin));
 
   epoll_event ev;
-  ev.events = EPOLLIN | EPOLLOUT | EPOLLERR | EPOLLET;
+  ev.events = EPOLLIN | EPOLLOUT | EPOLLERR;
   ep_.insert(sfd_, ev);
 }
 
@@ -54,15 +68,16 @@ void VoiceStream::runLoop(std::stop_token stok) {
   constexpr auto numChannels = 1;
   constexpr auto format = portaudio::FLOAT32;
   constexpr auto sampleRate = 44100;
-  constexpr auto framesPerBuffer = 256;
-  constexpr auto multFactor = 4;
+  constexpr auto framesPerBuffer = 192;
+  constexpr auto multFactor = 10;
 
+  using Queue = boost::lockfree::spsc_queue<
+      float,
+      boost::lockfree::capacity<framesPerBuffer * numChannels * multFactor>>;
   struct UserData {
-    using Queue = boost::lockfree::spsc_queue<
-        float,
-        boost::lockfree::capacity<framesPerBuffer * numChannels * multFactor>>;
     int numChannels{};
-    double inVolume{}, outVolume{};
+    float inVolume{1}, outVolume{1};
+    std::atomic_bool &inDev, &outDev;
     Queue in{}, out{};
   };
 
@@ -77,24 +92,24 @@ void VoiceStream::runLoop(std::stop_token stok) {
         outputDevice,
         numChannels,
         format,
-        false,
+        true,
         outputDevice.defaultLowOutputLatency(),
         nullptr};
     portaudio::DirectionSpecificStreamParameters inParams{
         inputDevice,
         numChannels,
         format,
-        false,
-        inputDevice.defaultLowInputLatency(),
+        true,
+        inputDevice.defaultHighInputLatency(),
         nullptr};
     portaudio::StreamParameters params{inParams, outParams, sampleRate,
-                                       framesPerBuffer, paNoFlag};
+                                       framesPerBuffer,
+                                       paClipOff | paDitherOff};
 
-    UserData qs{numChannels};
+    UserData qs{numChannels, 7, 1, inDev_, outDev_};
 
     auto callback =
-        [](const void* inputBuffer, void* outputBuffer,
-           unsigned long framesPerBuffer,
+        [](const void* inputBuffer, void* outputBuffer, unsigned long frames,
            [[maybe_unused]] const PaStreamCallbackTimeInfo* timeInfo,
            [[maybe_unused]] PaStreamCallbackFlags statusFlags,
            void* userData) -> int {
@@ -105,11 +120,23 @@ void VoiceStream::runLoop(std::stop_token stok) {
       auto inVolume = ud->inVolume, outVolume = ud->outVolume;
       auto &qin = ud->in, &qout = ud->out;
 
-      auto size = framesPerBuffer * ud->numChannels;
+      auto size = frames * ud->numChannels;
 
-      for (unsigned long i = 0; i < size; ++i) {
-        qin.push(in[i] * inVolume);
-        out[i] = qout.pop(out[i]) ? out[i] * outVolume : 0;
+      float frame;
+      if (inputBuffer && ud->inDev) {
+        for (unsigned long i = 0; i < size; ++i) {
+          frame = in[i] * inVolume;
+          if (frame >= -0.000001 && frame <= 0.000001)
+            continue;
+          qin.push(frame);
+        }
+      }
+      if (outputBuffer && ud->outDev) {
+        for (unsigned long i = 0; i < size; ++i)
+          if (qout.pop(frame))
+            out[i] = frame * outVolume;
+          else
+            out[i] = 0.0f;
       }
       return paContinue;
     };
@@ -120,26 +147,40 @@ void VoiceStream::runLoop(std::stop_token stok) {
     float recv[framesPerBuffer * numChannels * multFactor];
 
     constexpr auto callFreq = double(framesPerBuffer) / sampleRate;
-    constexpr auto multFactorSleep = 2;
-    constexpr auto timesleep = callFreq / multFactorSleep;
 
     stream.start();
     while (!stok.stop_requested()) {
-      if (ep_.wait(&ev, 1, 0)) {
+      if (ep_.wait(&ev, 1, 1)) {
         if (ev.events & EPOLLIN) {
           data = sfd_.recv();
-          std::memcpy(&recv, data.data(), data.length());
-          qs.out.push(recv, data.length() / sizeof(float));
+          size_t result = 0;
+          do {
+            auto bytes = result * sizeof(float);
+            auto min = std::min(data.length() - bytes, sizeof(recv));
+            std::memcpy(recv, data.data() + bytes, min);
+            result += qs.out.push(recv, min / sizeof(float));
+            if (!qs.out.write_available())
+              std::this_thread::yield();
+          } while (result * sizeof(float) != data.length());
         }
         if (ev.events & EPOLLOUT) {
           size_t size;
-          if ((size = qs.in.pop(recv, sizeof(recv) / sizeof(float))))
-            sfd_.send(reinterpret_cast<char*>(recv), size, 0);
+          if ((size = qs.in.pop(recv, sizeof(recv) / sizeof(float)))) {
+            size_t result = 0;
+            constexpr size_t MAX_SEND_FLOAT = 1458 / sizeof(float);
+            do {
+              auto count = sfd_.send(
+                  recv + result, std::min(size - result, MAX_SEND_FLOAT), 0);
+              result += count;
+            } while (result != size);
+          }
         }
-        if (ev.events & EPOLLERR)
-          throw std::runtime_error("voiceStream (loop): epoll return EPOLLERR");
+        if (ev.events & EPOLLERR) {
+          std::cout << "voiceStream (loop): epoll return EPOLLERR\n";
+          break;
+        }
       }
-      std::this_thread::sleep_for(std::chrono::duration<double>(timesleep));
+      std::this_thread::sleep_for(std::chrono::duration<double>(callFreq));
     }
   } catch (const std::exception& e) {
     std::osyncstream(std::cerr) << e.what() << '\n';

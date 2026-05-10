@@ -49,6 +49,7 @@ class VoiceChannel final : public Channel {
   size_t size() const;
   bool empty() const;
   bool contains(in_addr_t addr, in_port_t port) const;
+  void clear() noexcept;
 
   in_addr_t ip() const;
   in_port_t port() const;

@@ -25,14 +25,14 @@ struct DataUser {
 };
 
 struct ParseInfo {
-  std::string_view data;
+  std::string& data;
   std::shared_ptr<DataUser>& du;
 };
 
 class Server {
   enum Options {
     MAX_EVENTS = 50,
-    TIMEOUT_MS = 1,
+    TIMEOUT_MS = 20,
   };
 
  public:
@@ -65,6 +65,7 @@ class Server {
   void fillParse(containers::Parse& p, ParseInfo& pinfo);
 
  private:
+  mutable std::mutex mut_, mutJt_;
   size_t id_;
   std::jthread jt_;
   containers::Epoll ep_;
