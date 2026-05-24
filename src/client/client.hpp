@@ -8,7 +8,7 @@
 #include "lib/epoll.hpp"
 #include "lib/socket.hpp"
 
-namespace client {
+namespace voicechat {
 
 class VoiceStream {
  public:
@@ -83,4 +83,4 @@ class Client {
   VoiceStream vstream_;
 };
 
-}  // namespace client
+}  // namespace voicechat

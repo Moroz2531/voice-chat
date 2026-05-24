@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <concepts>
 #include <memory>
 #include <utility>
 
@@ -13,15 +14,15 @@ using netsize_t = int;
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/tcp.h>
+#include <netinet/udp.h>
 #include <sys/socket.h>
 
 using netsize_t = ssize_t;
 #endif
 
-namespace containers {
-
-#define DATA_BYTES_MAX_LEN 1458
-#define DATA_FLOAT_LEN (DATA_BYTES_MAX_LEN / sizeof(float))
+namespace voicechat {
 
 class Socket final {
   using Counter = std::shared_ptr<std::atomic_size_t>;
@@ -138,4 +139,20 @@ class Socket final {
   void swap(Socket& sock) noexcept;
 };
 
-}  // namespace containers
+template <typename T>
+concept AddrType = std::is_same_v<T, in_addr> || std::is_same_v<T, in_addr_t>;
+
+template <typename AddrType>
+sockaddr_in createSockaddrIn(int family, in_port_t port, AddrType addr) {
+  sockaddr_in sin;
+  std::memset(&sin, 0, sizeof(sockaddr_in));
+  sin.sin_port = port;
+  if constexpr (std::is_same_v<T, in_addr>)
+    sin.sin_addr = addr;
+  else
+    sin.sin_addr.s_addr = addr;
+  sin.sin_family = family;
+  return sin;
+}
+
+}  // namespace voicechat

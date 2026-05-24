@@ -5,7 +5,7 @@
 
 #include "client.hpp"
 
-using namespace client;
+using namespace voicechat;
 using namespace std::chrono_literals;
 
 Client::Client() {

@@ -9,6 +9,7 @@
 #include <portaudiocpp/StreamParameters.hxx>
 
 #include "client.hpp"
+#include "vstream.hpp"
 
 namespace {
 template <bool remote = false>
@@ -71,15 +72,14 @@ void VoiceStream::runLoop(std::stop_token stok) {
   constexpr auto framesPerBuffer = 192;
   constexpr auto multFactor = 10;
 
-  using Queue = boost::lockfree::spsc_queue<
-      float,
-      boost::lockfree::capacity<framesPerBuffer * numChannels * multFactor>>;
   struct UserData {
     int numChannels{};
     float inVolume{1}, outVolume{1};
     std::atomic_bool &inDev, &outDev;
-    Queue in{}, out{};
+    Transmitter& transmitter;
   };
+
+  Transmitter<float, framesPerBuffer * numChannels * multFactor> transmitter;
 
   try {
     portaudio::AutoSystem autoSystem;
