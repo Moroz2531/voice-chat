@@ -1,77 +1,52 @@
 #pragma once
 
+#include <tbb/concurrent_hash_map.h>
+#include <tbb/concurrent_set.h>
+#include <atomic>
 #include <memory>
-#include <mutex>
-#include <thread>
-#include <unordered_map>
 
-#include "channel.hpp"
-#include "general/parse.hpp"
-#include "lib/epoll.hpp"
-#include "lib/socket.hpp"
+#include <channel.hpp>
+#include <general/parse.hpp>
+#include <iserver.hpp>
+#include <lib/socket.hpp>
+#include <user.hpp>
+#include <vector>
 
-namespace server {
-struct DataUser {
-  containers::Socket sfd;
-  uint64_t chsSize{0};
-  uint64_t channelIndex{0};
-  bool connectChannel{false}, procReq{false};
+namespace messenger {
 
-  void operator=(const containers::Socket& fd) { sfd = fd; }
-  void operator=(size_t size) noexcept { chsSize = size; }
-
-  explicit operator containers::Socket() { return sfd; }
-  operator size_t() const noexcept { return chsSize; }
+struct ServerLoopSettings {
+  const int maxEvents{50}, timeoutMS{100};
 };
 
-struct ParseInfo {
-  std::string& data;
-  std::shared_ptr<DataUser>& du;
+struct StatusServer {
+  ServerLoopSettings slsettings;
+  bool enable;
 };
 
-class Server {
-  enum Options {
-    MAX_EVENTS = 50,
-    TIMEOUT_MS = 20,
-  };
+using ServerUsersHashMap =
+    tbb::concurrent_hash_map<int, std::unique_ptr<IUser>>;
+using ServerChannelsHashMap =
+    tbb::concurrent_hash_map<uint64_t, std::unique_ptr<IChannel>>;
+
+class Server final : public BaseServer, private ServerLoopSettings {
+ public:
+  Server(size_t id) : BaseServer(id) {};
 
  public:
-  Server(size_t id);
-  Server(const Server& other) = delete;
-  Server(Server&& other) noexcept = delete;
-  ~Server() { stop(); }
+  bool insert(const ISocket& sfd, std::unique_ptr<IUser> u);
+  bool erase(const ISocket& sfd, std::unique_ptr<IUser>& res) noexcept;
 
-  Server& operator=(const Server& rhs) = delete;
-  Server& operator=(Server&& rhs) noexcept = delete;
+  size_t size() const noexcept { return conUsers_.size(); };
+  bool empty() const noexcept { return conUsers_.empty(); };
 
- public:
-  operator uint64_t() const noexcept { return id_; }
+  StatusServer get() const;
 
- public:
-  void run();
-  void stop();
-  bool joinable() const noexcept;
-
- public:
-  void insert(const containers::Socket& sfd);
-  void erase(const containers::Socket& sfd);
-
-  size_t size() const;
-  bool empty() const;
-  bool contains(const containers::Socket& sfd) const;
+  void exec(std::stop_token stok) override final;
 
  private:
-  void runLoop(std::stop_token stok);
-  void fillParse(containers::Parse& p, ParseInfo& pinfo);
-
- private:
-  mutable std::mutex mut_, mutJt_;
-  size_t id_;
-  std::jthread jt_;
-  containers::Epoll ep_;
-  uint64_t chIdx_{0};
-  std::unordered_map<uint64_t, std::unique_ptr<Channel>> chs_;
-  std::unordered_map<int, std::shared_ptr<DataUser>> sfds_;
+  std::atomic_bool en_{false};
+  ServerChannelsHashMap chs_;
+  ServerUsersHashMap conUsers_;
+  Epoll ep_;
 };
-
-}  // namespace server
+}  // namespace messenger

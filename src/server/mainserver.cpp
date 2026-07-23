@@ -1,72 +1,101 @@
-#include <format>
-#include <iostream>
-#include <syncstream>
+#include <mainserver.hpp>
 
-#include "mainserver.hpp"
+using namespace messenger;
 
-using namespace server;
+namespace {
+constexpr uint32_t EPOLL_DEFAULT_PARAMS =
+    EPOLLET | EPOLLONESHOT | EPOLLIN | EPOLLERR | EPOLLHUP;
+constexpr auto EPOLL_MAX_EVENTS = 50;
+constexpr auto EPOLL_TIMEOUT_MS = 20;
+};  // namespace
 
-MainServer::MainServer() {}
-
-void MainServer::run() {
-  if (jt_.joinable())
-    throw std::runtime_error("the main server is already running!");
-  sfdAccpt_.create(AF_INET, SOCK_STREAM, 0);
-  sockaddr_in sin;
-  std::memset(&sin, 0, sizeof(sockaddr_in));
-  sin.sin_family = AF_INET;
-  sin.sin_addr.s_addr = INADDR_ANY;
-  sin.sin_port = 0;
-  sfdAccpt_.bind(reinterpret_cast<sockaddr*>(&sin), sizeof(sockaddr_in));
-  sfdAccpt_.listen();
-  jt_ = std::jthread([this](std::stop_token stok) { runLoop(stok); });
-}
-
-void MainServer::stop() {
-  if (jt_.joinable()) {
-    sv_.stop();
-    jt_.request_stop();
-    jt_.join();
-    sfdAccpt_.close();
-  }
-}
-
-bool MainServer::joinable() const noexcept {
-  return jt_.joinable();
-}
-
-in_addr_t MainServer::ip() const {
-  return sfdAccpt_.ip();
-}
-
-in_port_t MainServer::port() const {
-  return sfdAccpt_.port();
-}
-
-void MainServer::runLoop(std::stop_token stok) {
-  char buf[INET_ADDRSTRLEN];
-  struct in_addr addr;
-
-  containers::Epoll ep;
-  epoll_event ev;
-  ev.events = EPOLLIN;
-  ep.insert(sfdAccpt_, ev);
-  try {
-    while (!stok.stop_requested()) {
-      if (ep.wait(&ev, 1, 5)) {
-        auto sfd = sfdAccpt_.accept4(nullptr, nullptr, SOCK_NONBLOCK);
-        sv_.insert(sfd);
-        if (sv_.size() == 1)
-          sv_.run();
-        addr.s_addr = sfd.ip<true>();
-        inet_ntop(AF_INET, &addr, buf, sizeof(buf));
-        std::cout << std::format("Client connected: {}/{}\n", buf,
-                                 sfd.port<true>());
-      }
-      if (sv_.empty())
-        sv_.stop();
+MainServer::MainServer(uint64_t id) : BaseServer(id) {
+  jt_ = std::jthread([&](std::stop_token stok) {
+    try {
+      set_run();
+      std::jthread jt{[&](std::stop_token stok) {
+        try {
+          handler_accept(stok);
+        } catch (const std::exception& e) {
+          set_warn();
+        }
+      }};
+      handler_users(stok);
+    } catch (const std::exception& e) {
+      set_warn();
     }
-  } catch (const std::exception& e) {
-    std::osyncstream(std::cerr) << e.what() << '\n';
+  });
+}
+
+bool MainServer::local_ip(in_addr_t& addr) const noexcept {
+  return acc_.get()[rand() % acc_.get().size()]->local_ip(addr);
+}
+
+bool MainServer::local_port(in_port_t& port) const noexcept {
+  return acc_.get()[rand() % acc_.get().size()]->local_port(port);
+}
+
+MainServer::Acceptor::Acceptor(size_t cnt)
+    : accpt_{
+          cnt,
+          std::make_unique<Socket>(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)} {
+  auto sin{createSockaddrIn(AF_INET, 0, INADDR_ANY)};
+  std::for_each(accpt_.begin(), accpt_.end(), [&](auto sfd) {
+    sfd->bind(reinterpret_cast<sockaddr*>(&sin), sizeof(sin));
+    sfd->listen();
+    ep_.insert(*sfd,
+               epoll_event{.events = EPOLL_DEFAULT_PARAMS, .data.ptr = &sfd});
+  });
+}
+
+bool MainServer::Acceptor::insert(Socket&& sfd) {
+  auto& tmp = sfd;
+  auto retval = gsts_.insert(std::make_pair<int, Guest>(
+      sfd, Guest{std::make_unique<Socket>(std::move(sfd))}));
+  if (retval) {
+    ep_.insert(tmp,
+               epoll_event{.events = EPOLL_DEFAULT_PARAMS, .data.fd = tmp});
+    return true;
   }
+  return false;
+}
+
+void MainServer::handler_accept(std::stop_token stok) {
+  auto handle_accept = [&](const epoll_event& ev) {
+    auto&& sfd = *static_cast<std::unique_ptr<Socket>*>(ev.data.ptr);
+    acc_.insert(std::move(sfd->accept4(nullptr, nullptr, SOCK_NONBLOCK)));
+  };
+
+  auto foreach_events = [&](std::span<const epoll_event> evs) {
+    for (auto&& i : evs) {
+      if (i.events & EPOLLIN) {
+      }
+      if (i.events & (EPOLLERR | EPOLLHUP)) {
+      }
+    }
+  };
+
+  epoll_event evs[EPOLL_MAX_EVENTS];
+  while (!stok.stop_requested()) {
+    auto c = acc_.wait(std::span{evs, EPOLL_MAX_EVENTS}, EPOLL_TIMEOUT_MS);
+    try {
+      foreach_events(std::span{evs, c});
+    } catch (const std::exception& e) {
+      // записать ошибку в файл
+    }
+  }
+}
+
+void MainServer::handler_users(std::stop_token stok) {
+  auto loop_epoll = [&] {
+    epoll_event evs[EPOLL_MAX_EVENTS];
+    while (!stok.stop_requested()) {
+      // auto cev = ep_.wait(evs, EPOLL_MAX_EVENTS, EPOLL_TIMEOUT_MS);
+      try {
+        // foreach_events(std::span{evs, cev});
+      } catch (const std::exception& e) {
+      }
+    }
+  };
+  loop_epoll();
 }

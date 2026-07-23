@@ -13,7 +13,7 @@
 
 #include "socket.hpp"
 
-using namespace containers;
+using namespace messenger;
 
 Socket::Socket(int domain, int type, int protocol)
     : refCount_{std::make_shared<std::atomic_size_t>(1)} {
@@ -268,28 +268,6 @@ netsize_t Socket::sendto(const float* buf,
   return sendBytes / sizeof(float);
 }
 
-netsize_t Socket::recvfrom(float* buf,
-                           size_t count,
-                           int flags,
-                           sockaddr* addr,
-                           socklen_t* addrLen) const {
-  const size_t bytes{count * sizeof(float)};
-  char tempbuf[DATA_BYTES_MAX_LEN];
-  size_t size;
-  netsize_t recvBytes;
-  size_t offset{0};
-
-  do {
-    size = std::min(bytes - offset, static_cast<size_t>(DATA_BYTES_MAX_LEN));
-    if ((recvBytes = recvfrom(tempbuf, size, flags, addr, addrLen)) == -1)
-      return -1;
-    if (recvBytes > 0)
-      std::memcpy(buf + (offset / sizeof(float)), tempbuf, recvBytes);
-    offset += recvBytes;
-  } while (recvBytes > 0 && offset < bytes);
-  return offset / sizeof(float);
-}
-
 void Socket::setsockopt(int level,
                         int optname,
                         const void* optval,
@@ -374,17 +352,4 @@ void Socket::swap(Socket& sock) noexcept {
 
 netsize_t Socket::send(const std::string_view buf, int flags) const {
   return Socket::send(buf.data(), buf.length(), flags);
-}
-
-std::string Socket::recv(int flags) const {
-  std::string bufRes;
-  char buf[DATA_BYTES_MAX_LEN];
-  netsize_t cbytes;
-
-  while ((cbytes = Socket::recv(buf, DATA_BYTES_MAX_LEN - 1, flags)) > 0) {
-    if (cbytes == -1)
-      throw std::runtime_error("socket: error in recv");
-    bufRes.append(buf, cbytes);
-  }
-  return bufRes;
 }

@@ -22,12 +22,40 @@ using netsize_t = int;
 using netsize_t = ssize_t;
 #endif
 
-namespace voicechat {
+namespace messenger {
 
-class Socket final {
+class ISocket {
+ public:
+  virtual netsize_t send(const char* buf, size_t count, int flags) const = 0;
+  virtual netsize_t recv(char* buf, size_t count, int flags) const = 0;
+
+  virtual netsize_t sendto(const char* buf,
+                           size_t count,
+                           int flags,
+                           const sockaddr* addr,
+                           socklen_t addrLen = 0) const = 0;
+  virtual netsize_t recvfrom(char* buf,
+                             size_t count,
+                             int flags,
+                             sockaddr* addr,
+                             socklen_t* addrLen) const = 0;
+
+  virtual bool local_ip(in_addr_t& addr) const noexcept = 0;
+  virtual bool local_port(in_port_t& port) const noexcept = 0;
+
+  virtual void close() noexcept = 0;
+
+#ifdef _WIN32
+  virtual operator SOCKET() const = 0;
+#else
+  virtual operator int() const = 0;
+#endif
+};
+
+class Socket : public ISocket {
   using Counter = std::shared_ptr<std::atomic_size_t>;
   enum SocketOptions {
-    LISTEN_QUEUE_LEN = 10,
+    LISTEN_QUEUE_LEN = 30,
   };
 #ifdef _WIN32
   WSADATA wsaData_;
@@ -50,7 +78,7 @@ class Socket final {
   int getType() const;
 
   void create(int domain, int type, int protocol);
-  void close() noexcept;
+  void close() noexcept override;
 
 #ifdef _WIN32
   SOCKET getRaw() const;
@@ -80,13 +108,13 @@ class Socket final {
                   socklen_t* optlen) const;
 
   netsize_t send(const std::string_view buf, int flags = 0) const;
-  netsize_t send(const char* buf, size_t count, int flags) const;
+  netsize_t send(const char* buf, size_t count, int flags) const override;
   netsize_t send(const float* buf, size_t count, int flags) const;
   netsize_t sendto(const char* buf,
                    size_t count,
                    int flags,
                    const sockaddr* addr,
-                   socklen_t addrLen = 0) const;
+                   socklen_t addrLen = 0) const override;
   netsize_t sendto(const float* buf,
                    size_t count,
                    int flags,
@@ -94,12 +122,12 @@ class Socket final {
                    socklen_t addrLen = 0) const;
 
   std::string recv(int flags = 0) const;
-  netsize_t recv(char* buf, size_t count, int flags) const;
+  netsize_t recv(char* buf, size_t count, int flags) const override;
   netsize_t recvfrom(char* buf,
                      size_t count,
                      int flags,
                      sockaddr* addr,
-                     socklen_t* addrLen) const;
+                     socklen_t* addrLen) const override;
   netsize_t recvfrom(float* buf,
                      size_t count,
                      int flags,
@@ -130,7 +158,7 @@ class Socket final {
 
   bool isValid() const noexcept;
 
-  operator auto() const { return sfd_; }
+  operator int() const override final { return sfd_; }
 
  private:
 #ifdef __linux__
@@ -155,4 +183,4 @@ sockaddr_in createSockaddrIn(int family, in_port_t port, AddrType addr) {
   return sin;
 }
 
-}  // namespace voicechat
+}  // namespace messenger

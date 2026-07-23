@@ -4,7 +4,7 @@
 
 #include "epoll.hpp"
 
-using namespace containers;
+using namespace messenger;
 
 Epoll::Epoll() : epfd_{epoll_create1(EPOLL_CLOEXEC)} {
   if (epfd_ == -1)
@@ -19,10 +19,6 @@ Epoll& Epoll::operator=(Epoll&& rhs) noexcept {
   return *this;
 }
 
-void Epoll::insert(const Socket& sfd, epoll_event& ev) const {
-  insert(static_cast<int>(sfd), ev);
-}
-
 void Epoll::change(const Socket& sfd, epoll_event& ev) const {
   change(static_cast<int>(sfd), ev);
 }
@@ -31,13 +27,13 @@ void Epoll::erase(const Socket& sfd) const {
   erase(static_cast<int>(sfd));
 }
 
-void Epoll::insert(int sfd, epoll_event& ev) const {
-  if (epoll_ctl(epfd_, EPOLL_CTL_ADD, sfd, &ev))
+void Epoll::change(int sfd, epoll_event& ev) const {
+  if (epoll_ctl(epfd_, EPOLL_CTL_MOD, sfd, &ev))
     throw(std::system_error());
 }
 
-void Epoll::change(int sfd, epoll_event& ev) const {
-  if (epoll_ctl(epfd_, EPOLL_CTL_MOD, sfd, &ev))
+bool Epoll::insert(int sfd, epoll_event& ev) const {
+  if (epoll_ctl(epfd_, EPOLL_CTL_ADD, sfd, &ev))
     throw(std::system_error());
 }
 

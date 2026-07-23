@@ -1,77 +1,74 @@
 #pragma once
 
 #include <netinet/in.h>
-#include <boost/unordered_set.hpp>
-#include <mutex>
-#include <string>
-#include <thread>
+#include <tbb/concurrent_hash_map.h>
+#include <atomic>
+#include <optional>
+#include <shared_mutex>
+#include <span>
+#include <stop_token>
 
 #include "lib/epoll.hpp"
 #include "lib/socket.hpp"
 
-namespace server {
+namespace messenger {
 
-class Channel {
+class IChannel {
+  virtual uint64_t id() const noexcept = 0;
+  virtual const std::u16string& name() const noexcept = 0;
+  virtual void exec(std::stop_token stok) = 0;
+  virtual bool enable() const noexcept = 0;
+  bool ip(in_addr_t& addr) const noexcept = 0;
+  bool port(in_port_t& port) const noexcept = 0;
+
+#ifdef false
+  virtual bool send(const std::span<char> buf, int flags) = 0;
+  virtual size_t recv(std::span<char> buf, int flags) = 0;
+#endif
+};
+
+class Channel : public IChannel {
  public:
-  Channel(size_t id) : id_{id} {}
-  Channel(const Channel& other) = default;
-  Channel(Channel&& other) noexcept = default;
-  virtual ~Channel() = default;
+  Channel(size_t id, const std::u16string& name) : id_{id}, name_{name} {}
 
-  Channel& operator=(const Channel& rhs) = default;
-  Channel& operator=(Channel&& rhs) noexcept = default;
+  uint64_t id() const noexcept override final { return id_; }
+  const std::u16string& name() const noexcept override final { return name_; }
 
-  operator uint64_t() const { return id_; }
+  void set_tid(size_t tid) { tid_ = tid; }
+  const std::optional<size_t>& get_tid() const noexcept { return tid_; }
 
- protected:
+ private:
+  std::optional<size_t> tid_{std::nullopt};
   uint64_t id_;
+  std::u16string name_;
 };
 
 class VoiceChannel final : public Channel {
- public:
-  VoiceChannel(size_t id);
-  VoiceChannel(const VoiceChannel& other) = delete;
-  VoiceChannel(VoiceChannel&& other) noexcept = delete;
-  ~VoiceChannel() { stop(); }
-
-  VoiceChannel& operator=(const VoiceChannel& rhs) = delete;
-  VoiceChannel& operator=(VoiceChannel&& rhs) noexcept = delete;
+  using HashMap =
+      tbb::concurrent_hash_map<std::pair<in_addr_t, in_port_t>, double>;
 
  public:
-  void run();
-  void stop();
-  bool joinable() const noexcept;
+  VoiceChannel(size_t id, const std::u16string& name) : Channel(id, name) {}
 
  public:
   void insert(in_addr_t addr, in_port_t port);
   void erase(in_addr_t addr, in_port_t port);
 
-  size_t size() const;
-  bool empty() const;
-  bool contains(in_addr_t addr, in_port_t port) const;
+  size_t size() const noexcept;
+  bool empty() const noexcept;
   void clear() noexcept;
 
-  in_addr_t ip() const;
-  in_port_t port() const;
+  void exec(std::stop_token stok) override final;
+
+  bool ip(in_addr_t& addr) const noexcept;
+  bool port(in_port_t& port) const noexcept;
+
+  bool enable() const noexcept override final { return en_; }
 
  private:
-  void runLoop(std::stop_token stok);
-
- private:
-  std::jthread jt_;
-  mutable std::mutex mut_;
-  containers::Socket sfd_;
-  boost::unordered_set<std::pair<in_addr_t, in_port_t>> users_;
+  HashMap usrs_;
+  std::unique_ptr<ISocket> sfd_;
+  std::atomic_bool en_;
 };
 
-#ifdef false
-class TextChannel final : public Channel {
- public:
-  TextChannel(size_t id) : Channel(id) {}
-
-  void write(const std::string& data);
-  void read(std::string& data);
-};
-#endif
-
-}  // namespace server
+}  // namespace messenger

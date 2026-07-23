@@ -3,7 +3,8 @@
 #include <functional>
 #include <unordered_map>
 
-namespace containers {
+namespace messenger {
+
 class Parse {
  public:
   Parse() = default;
@@ -25,4 +26,4 @@ class Parse {
   std::unordered_map<size_t, std::function<void()>> tasks_;
 };
 
-}  // namespace containers
+}  // namespace messenger

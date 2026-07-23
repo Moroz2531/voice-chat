@@ -1,139 +1,96 @@
 #include <netinet/in.h>
+#include <boost/container/static_vector.hpp>
 #include <cstring>
-#include <format>
 #include <iostream>
 #include <stdexcept>
-#include <syncstream>
 
 #include "channel.hpp"
 
-using namespace server;
+using namespace messenger;
 
 namespace {
-template <bool remote = false>
-std::string getIPv4(const containers::Socket& sfd) noexcept {
-  char buf[INET_ADDRSTRLEN];
-  in_addr addr;
-  addr.s_addr = sfd.ip<remote>();
-
-  if (inet_ntop(AF_INET, &addr, buf, sizeof(buf)) == NULL) {
-    return std::string("printIPv4: error inet_ntop");
-  }
-  return std::string(std::format("{}/{}", buf, ntohs(sfd.port<remote>())));
-}
-}  // namespace
-
-VoiceChannel::VoiceChannel(size_t id)
-    : Channel(id), sfd_{AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0} {
-  sockaddr_in sin;
-  std::memset(&sin, 0, sizeof(sockaddr_in));
-  sin.sin_addr.s_addr = INADDR_ANY;
-  sin.sin_family = AF_INET;
-  sin.sin_port = 0;
-  sfd_.bind(reinterpret_cast<sockaddr*>(&sin), sizeof(sockaddr_in));
+constexpr uint32_t DEFAULT_PARAMS_EPOLL =
+    EPOLLIN | EPOLLET | EPOLLERR | EPOLLHUP;
 }
 
 void VoiceChannel::insert(in_addr_t addr, in_port_t port) {
-  std::lock_guard<std::mutex> lock{mut_};
-  users_.insert(std::pair<in_addr_t, in_port_t>{addr, port});
+  usrs_.insert(
+      std::pair<std::pair<in_addr_t, in_port_t>, double>{{addr, port}, 0});
 }
 
 void VoiceChannel::erase(in_addr_t addr, in_port_t port) {
-  std::lock_guard<std::mutex> lock{mut_};
-  users_.erase(std::pair<in_addr_t, in_port_t>{addr, port});
+  usrs_.erase(std::pair<in_addr_t, in_port_t>{addr, port});
 }
 
-in_addr_t VoiceChannel::ip() const {
-  return sfd_.ip();
+size_t VoiceChannel::size() const noexcept {
+  return usrs_.size();
 }
 
-in_port_t VoiceChannel::port() const {
-  return sfd_.port();
-}
-
-void VoiceChannel::run() {
-  std::lock_guard<std::mutex> lock{mut_};
-  if (jt_.joinable())
-    throw std::runtime_error("the channel already is running");
-  jt_ = std::jthread([this](std::stop_token stok) { runLoop(stok); });
-}
-
-void VoiceChannel::stop() {
-  std::lock_guard<std::mutex> lock{mut_};
-  if (jt_.joinable()) {
-    jt_.request_stop();
-    jt_.join();
-  }
-}
-
-bool VoiceChannel::joinable() const noexcept {
-  return jt_.joinable();
-}
-
-bool VoiceChannel::empty() const {
-  std::lock_guard<std::mutex> lock{mut_};
-  return users_.empty();
-}
-
-size_t VoiceChannel::size() const {
-  std::lock_guard<std::mutex> lock{mut_};
-  return users_.size();
+bool VoiceChannel::empty() const noexcept {
+  return usrs_.empty();
 }
 
 void VoiceChannel::clear() noexcept {
-  std::lock_guard<std::mutex> lock{mut_};
-  users_.clear();
+  usrs_.clear();
 }
 
-bool VoiceChannel::contains(in_addr_t addr, in_port_t port) const {
-  std::lock_guard<std::mutex> lock{mut_};
-  return users_.contains(std::pair<in_addr_t, in_port_t>{addr, port});
+bool VoiceChannel::ip(in_addr_t& addr) const noexcept {
+  if (!sfd_.get())
+    return false;
+  return true;
 }
 
-void VoiceChannel::runLoop(std::stop_token stok) {
-  float data[DATA_FLOAT_LEN];
-  sockaddr_in sinrecv, sinsend;
-  socklen_t len;
+bool VoiceChannel::port(in_port_t& port) const noexcept {
+  if (!sfd_.get())
+    return false;
+  port = sfd_->local_port();
+  return true;
+}
 
-  std::memset(&sinsend, 0, sizeof(sockaddr_in));
-  sinsend.sin_family = AF_INET;
-
-  while (!stok.stop_requested()) {
-    len = sizeof(sockaddr_in);
-    netsize_t count;
-    try {
-      count = sfd_.recvfrom(data, DATA_FLOAT_LEN, 0,
-                            reinterpret_cast<sockaddr*>(&sinrecv), &len);
-      if (!count || len != sizeof(sockaddr_in)) {
-        std::this_thread::yield();
+void VoiceChannel::exec(std::stop_token stok) {
+  auto handleInput = [&](std::span<char> data) {
+    sockaddr_in sin;
+    socklen_t slen = sizeof(sin);
+    netsize_t bytes;
+    std::memset(&sin, 0, slen);
+    while ((bytes = sfd_->recvfrom(data.data(), data.size(), 0,
+                                   reinterpret_cast<sockaddr*>(&sin), &slen))) {
+      HashMap::accessor acc;
+      std::pair<in_addr_t, in_port_t> curKey{sin.sin_addr.s_addr, sin.sin_port};
+      if (!usrs_.find(acc, curKey))
         continue;
+      for (auto&& i : usrs_) {
+        if (i.first == curKey)
+          continue;
+        auto tsin = createSockaddrIn(AF_INET, i.first.first, i.first.second);
+        constexpr auto gb = 1024 * 1024 * 1024;
+        i.second += static_cast<double>(bytes) / gb;
+        sfd_->sendto(data.data(), bytes, 0, reinterpret_cast<sockaddr*>(&tsin),
+                     sizeof(tsin));
       }
-      std::pair<in_addr_t, in_port_t> u{sinrecv.sin_addr.s_addr,
-                                        sinrecv.sin_port};
-      std::lock_guard<std::mutex> lock{mut_};
-      auto usIt = users_.find(u);
-      if (usIt == users_.end())
-        continue;
-      for (auto it = users_.begin(); it != usIt; ++it) {
-        sinsend.sin_addr.s_addr = it->first;
-        sinsend.sin_port = it->second;
-        try {
-          sfd_.sendto(data, count, 0, reinterpret_cast<sockaddr*>(&sinsend),
-                      sizeof(sockaddr_in));
-        } catch (const std::runtime_error& re) {
-        }
-      }
-      for (auto it = ++usIt, end = users_.end(); it != end; ++it) {
-        sinsend.sin_addr.s_addr = it->first;
-        sinsend.sin_port = it->second;
-        try {
-          sfd_.sendto(data, count, 0, reinterpret_cast<sockaddr*>(&sinsend),
-                      sizeof(sockaddr_in));
-        } catch (const std::runtime_error& re) {
-        }
-      }
-    } catch (const std::exception& e) {
-      std::osyncstream(std::cerr) << e.what() << '\n';
     }
+  };
+
+  try {
+    sfd_ = std::make_unique<Socket>(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK, 0);
+    sockaddr_in sin = createSockaddrIn(AF_INET, 0, INADDR_ANY);
+
+        boost::container::static_vector<char, 1400> data;
+    Epoll ep;
+    epoll_event ev{.events = DEFAULT_PARAMS_EPOLL, .data.fd = *sfd_};
+    ep.insert(*sfd_, ev);
+
+    en_.exchange(true);
+    while (!stok.stop_requested()) {
+      if (ep.wait(&ev, 1, 200)) {
+        if (ev.events & EPOLLIN)
+          handleInput(std::span{data.data(), data.max_size()});
+        if (ev.events & (EPOLLERR | EPOLLHUP))
+          break;
+      }
+    }
+  } catch (...) {
   }
+  en_.exchange(false);
+  sfd_.reset();
 }
